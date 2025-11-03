@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
-const { translate } = require('@vitalets/google-translate-api');
+const translate = require('translate-google');
 const { Pool } = require('pg');
 
 const app = express();
@@ -33,27 +33,65 @@ console.log(`✓ Đã cấu hình ${pages.length} fanpage`);
 
 // Hàm dịch sang tiếng Việt
 async function dichSangTiengViet(text) {
+  if (!text || text.trim() === '') {
+    return { banDich: text, ngonNguGoc: 'unknown', daDich: false };
+  }
+  
   try {
+    // Dịch sang tiếng Việt
     const result = await translate(text, { to: 'vi' });
+    
+    // Detect ngôn ngữ bằng cách dịch sang tiếng Anh và so sánh
+    let ngonNguGoc = 'en';
+    
+    // Nếu bản dịch giống y hệt bản gốc -> đã là tiếng Việt
+    if (result.toLowerCase().trim() === text.toLowerCase().trim()) {
+      ngonNguGoc = 'vi';
+      return {
+        banDich: text,
+        ngonNguGoc: 'vi',
+        daDich: false
+      };
+    }
+    
+    // Detect ngôn ngữ đơn giản
+    if (/[ăâđêôơưĂÂĐÊÔƠƯ]/.test(text)) {
+      ngonNguGoc = 'vi';
+    } else if (/[\u4e00-\u9fa5]/.test(text)) {
+      ngonNguGoc = 'zh';
+    } else if (/[\u3040-\u309f\u30a0-\u30ff]/.test(text)) {
+      ngonNguGoc = 'ja';
+    } else if (/[\uac00-\ud7af]/.test(text)) {
+      ngonNguGoc = 'ko';
+    }
+    
     return {
-      banDich: result.text,
-      ngonNguGoc: result.from.language.iso,
-      daDich: result.from.language.iso !== 'vi'
+      banDich: result,
+      ngonNguGoc: ngonNguGoc,
+      daDich: true
     };
   } catch (error) {
     console.error('Lỗi dịch sang tiếng Việt:', error.message);
-    return { banDich: text, ngonNguGoc: 'unknown', daDich: false };
+    return { 
+      banDich: text, 
+      ngonNguGoc: 'unknown', 
+      daDich: false 
+    };
   }
 }
 
 // Hàm dịch sang tiếng Anh
 async function dichSangTiengAnh(text) {
+  if (!text || text.trim() === '') {
+    return text;
+  }
+  
   try {
     const result = await translate(text, { to: 'en' });
-    return result.text;
+    return result;
   } catch (error) {
     console.error('Lỗi dịch sang tiếng Anh:', error.message);
-    return text;
+    return text; // Fallback: Trả về text gốc
   }
 }
 
