@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
-const translate = require('@vitalets/google-translate-api').default;
+const { translate } = require('@vitalets/google-translate-api');
 const { Pool } = require('pg');
 
 const app = express();
@@ -64,18 +64,27 @@ async function layThongTinKhachTuFB(pageToken, senderId) {
       `https://graph.facebook.com/v19.0/${senderId}`,
       {
         params: {
-          fields: 'name,profile_pic',
+          fields: 'first_name,last_name',
           access_token: pageToken
         }
       }
     );
+    
+    const firstName = response.data.first_name || '';
+    const lastName = response.data.last_name || '';
+    const name = `${firstName} ${lastName}`.trim() || `Khách ${senderId.slice(-6)}`;
+    
     return {
-      name: response.data.name || 'Unknown',
-      avatar: response.data.profile_pic || null
+      name: name,
+      avatar: null
     };
   } catch (error) {
     console.error('Lỗi lấy thông tin khách:', error.message);
-    return { name: 'Unknown', avatar: null };
+    // Fallback: Dùng ID làm tên
+    return { 
+      name: `Khách #${senderId.slice(-6)}`, 
+      avatar: null 
+    };
   }
 }
 
