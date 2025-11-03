@@ -1,0 +1,21 @@
+{
+  "name": "fb-telegram-bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@vitalets/google-translate-api": "^9.2.1",
+    "axios": "^1.13.1",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "node-telegram-bot-api": "^0.66.0",
+    "pg": "^8.16.3",
+    "socket.io": "^4.8.1"
+  }
+}
