@@ -1,4 +1,34 @@
-node_modules/
+# Environment variables
 .env
-.DS_Store
+.env.local
+.env.development
+.env.production
+*.env
+
+# Except example
+!.env.example
+
+# Node modules
+node_modules/
+
+# Logs
+logs/
 *.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build
+dist/
+build/
+
+# Credentials
+CREDENTIALS.md

@@ -454,18 +454,20 @@ const cacNut = taoNutAction(khach.id, page.id, senderId, ketQuaDich.ngonNguGoc);
     await luuTinNhan(khach.id, page.id, 'customer', text, null, null, ketQuaDich.daDich ? ketQuaDich.banDich : null);
     console.log(`✓ Đã chuyển tin nhắn từ ${page.name} - ${khach.name} lên Telegram`);
     // Broadcast đến web
-broadcastToWeb('new_message', {
-  customerId: khach.id,
-  customerName: khach.name,
-  pageId: page.id,
-  pageName: page.name,
-  message: text,
-  translated: ketQuaDich.daDich ? ketQuaDich.banDich : null,
-  language: ketQuaDich.ngonNguGoc,
-  labels: cacNhan,
-  timestamp: new Date().toISOString()
-});
-
+    broadcastToWeb('new_message', {
+      customerId: khach.id,
+      customerName: khach.name,
+      pageId: page.id,
+      pageName: page.name,
+      message: text,
+      translated: ketQuaDich.daDich ? ketQuaDich.banDich : null,
+      language: ketQuaDich.ngonNguGoc,
+      labels: cacNhan,
+      timestamp: new Date().toISOString()
+    });
+    
+    console.log(`✓ Đã chuyển tin nhắn từ ${page.name} - ${khach.name} lên Telegram`);
+    
   } catch (error) {
     console.error('Lỗi xử lý tin nhắn từ khách:', error);
   }
@@ -615,7 +617,16 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
     }
     
     console.log(`✓ Đã chuyển ${attachments.length} media từ ${page.name} - ${khach.name} lên Telegram`);
-    
+    // Broadcast đến web
+    broadcastToWeb('new_message', {
+      customerId: khach.id,
+      customerName: khach.name,
+      pageId: page.id,
+      pageName: page.name,
+      message: caption || 'Gửi media',
+      mediaType: attachments[0]?.type,
+      timestamp: new Date().toISOString()
+    });
   } catch (error) {
     console.error('Lỗi xử lý media:', error);
   }
@@ -1973,7 +1984,7 @@ app.post('/api/quickreplies', async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n${'='.repeat(50)}`);
   console.log(`🚀 Server đang chạy trên cổng ${PORT}`);
   console.log(`📱 Bot Telegram đã sẵn sàng`);

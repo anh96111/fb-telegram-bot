@@ -1,0 +1,27 @@
+# Facebook
+FB_APP_ID=1082833653702860
+FB_APP_SECRET=c6afd6ea816924671cb6dc5792e70148
+FB_VERIFY_TOKEN=jmcanvas
+
+# Fanpage 1
+PAGE_1_ID=108990475159622
+PAGE_1_NAME=JMCanvas-Nekko
+PAGE_1_TOKEN=EAAPY1NtHoMwBPytO7G81GmGx5kZCnHYbSkxew9klfVPRZCVFt74NzJ644kYCjXnnmXnBnqCkF1GAbFjbWsacO4Df9m4gV1SMP7FsamsfAdYbYXpmtvdzJVmZAJE2xE3IzEoav9peJg8gno8sNr4Lx77juYZCUdK5NKpdskwJmrQVLi3lDyOYnr5bpQEUxsHhS53ZBfzYeTSwRdoNEqsoZD
+
+# Fanpage 2 (nếu có)
+PAGE_2_ID=
+PAGE_2_NAME=
+PAGE_2_TOKEN=
+
+# Telegram
+TELEGRAM_BOT_TOKEN=8545263901:AAEH4_MFjqp-mpLUEntyn52h_Zo65fSKT14
+TELEGRAM_GROUP_ID=-1003284008041
+
+# Database (để trống, sẽ điền sau)
+DATABASE_URL=postgresql://postgres:rtfSdnwBviTSFCbYmzUKkHpdsvCpoXoV@maglev.proxy.rlwy.net:59274/railway
+
+# Server
+PORT=3000
+NODE_ENV=development
+
+LIBRETRANSLATE_URL=https://libretranslatelibretranslate-production.up.railway.app
