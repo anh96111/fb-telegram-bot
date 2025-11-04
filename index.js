@@ -105,7 +105,24 @@ const pool = new Pool({
 });
 
 // Khởi tạo Telegram bot
-const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
+const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { 
+  polling: {
+    interval: 300,
+    autoStart: true,
+    params: {
+      timeout: 10
+    }
+  }
+});
+
+// Xử lý lỗi polling
+bot.on('polling_error', (error) => {
+  console.log('⚠️ Telegram polling error:', error.code);
+  if (error.code === 'ETELEGRAM') {
+    console.log('⚠️ Another instance is running, using webhook mode instead');
+    bot.stopPolling();
+  }
+});
 
 // Danh sách các fanpage
 const pages = [];
