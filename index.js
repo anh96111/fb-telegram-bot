@@ -261,15 +261,17 @@ async function xuLyTinNhanTuKhach(page, senderId, text) {
     const ketQuaDich = await dichSangTiengViet(text);
     
     // Tạo chuỗi nhãn
-    const chuoiNhan = cacNhan.map(n => `<span style="background:${n.color || '#999'};color:#fff;padding:2px 8px;border-radius:3px;margin:0 2px;">${n.emoji || '🏷️'}${n.name}</span>`).join(' ');
+    const chuoiNhan = cacNhan.length > 0 
+  ? cacNhan.map(n => `${n.emoji || '🏷️'}<code>${n.name}</code>`).join(' ')
+  : '';
     
     // Kiểm tra thread cũ (48h)
     const threadCu = await layThreadCu(khach.id, page.id);
     
     // Format tin nhắn
-    let noiDung = `
-<b>━━━━━━━━━━━━━━━━━━━━</b>
-<b>🏪 ${page.name}</b> ${chuoiNhan}
+    let noiDung = `<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>🏪 ${page.name}</b>
+${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
 <b>━━━━━━━━━━━━━━━━━━━━</b>
 
 👤 <b>${khach.name}</b> (#${senderId.slice(-6)})
@@ -564,6 +566,99 @@ app.get('/health', (req, res) => {
 
 // Khởi động server
 const PORT = process.env.PORT || 3000;
+// Lệnh thêm nhãn
+bot.onText(/\/label (.+)/, async (msg, match) => {
+  if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
+  
+  if (!msg.reply_to_message) {
+    await bot.sendMessage(msg.chat.id, '❌ Vui lòng reply tin nhắn của khách để thêm nhãn', {
+      reply_to_message_id: msg.message_id
+    });
+    return;
+  }
+  
+  const tenNhan = match[1].trim().toLowerCase();
+  
+  try {
+    // Lấy customer_id từ mapping
+    const query = 'SELECT customer_id FROM conversation_mappings WHERE telegram_message_id = $1';
+    const result = await pool.query(query, [msg.reply_to_message.message_id]);
+    
+    if (result.rows.length === 0) {
+      await bot.sendMessage(msg.chat.id, '❌ Không tìm thấy thông tin khách hàng', {
+        reply_to_message_id: msg.message_id
+      });
+      return;
+    }
+    
+    const customerId = result.rows[0].customer_id;
+    
+    // Tạo hoặc lấy label
+    let labelQuery = 'SELECT id, emoji FROM labels WHERE name = $1';
+    let labelResult = await pool.query(labelQuery, [tenNhan]);
+    
+    let labelId, emoji;
+    if (labelResult.rows.length === 0) {
+      // Tạo label mới với emoji mặc định
+      const insertLabel = 'INSERT INTO labels (name, emoji, color) VALUES ($1, $2, $3) RETURNING id, emoji';
+      const newLabel = await pool.query(insertLabel, [tenNhan, '🏷️', '#999999']);
+      labelId = newLabel.rows[0].id;
+      emoji = newLabel.rows[0].emoji;
+    } else {
+      labelId = labelResult.rows[0].id;
+      emoji = labelResult.rows[0].emoji;
+    }
+    
+    // Gán label cho customer
+    const assignQuery = `
+      INSERT INTO customer_labels (customer_id, label_id, added_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (customer_id, label_id) DO NOTHING
+    `;
+    await pool.query(assignQuery, [customerId, labelId]);
+    
+    await bot.sendMessage(msg.chat.id, `✅ Đã thêm nhãn ${emoji}<code>${tenNhan}</code>`, {
+      reply_to_message_id: msg.message_id,
+      parse_mode: 'HTML'
+    });
+    
+    console.log(`✓ Đã thêm nhãn "${tenNhan}" cho customer ${customerId}`);
+    
+  } catch (error) {
+    console.error('Lỗi thêm nhãn:', error);
+    await bot.sendMessage(msg.chat.id, `❌ Lỗi: ${error.message}`, {
+      reply_to_message_id: msg.message_id
+    });
+  }
+});
+
+// Lệnh xem danh sách nhãn
+bot.onText(/\/labels/, async (msg) => {
+  if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
+  
+  try {
+    const result = await pool.query('SELECT name, emoji, color FROM labels ORDER BY name');
+    
+    if (result.rows.length === 0) {
+      await bot.sendMessage(msg.chat.id, '📋 Chưa có nhãn nào');
+      return;
+    }
+    
+    let danhSach = '<b>📋 DANH SÁCH NHÃN:</b>\n\n';
+    
+    for (const label of result.rows) {
+      danhSach += `${label.emoji || '🏷️'} <code>${label.name}</code>\n`;
+    }
+    
+    danhSach += '\n<i>Dùng: /label tên-nhãn (reply tin khách)</i>';
+    
+    await bot.sendMessage(msg.chat.id, danhSach, { parse_mode: 'HTML' });
+    
+  } catch (error) {
+    console.error('Lỗi xem nhãn:', error);
+    await bot.sendMessage(msg.chat.id, '❌ Lỗi lấy danh sách nhãn');
+  }
+});
 app.listen(PORT, () => {
   console.log(`\n${'='.repeat(50)}`);
   console.log(`🚀 Server đang chạy trên cổng ${PORT}`);
