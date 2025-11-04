@@ -295,17 +295,20 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
     noiDung += `\n<b>━━━━━━━━━━━━━━━━━━━━</b>`;
     
     // Tạo các nút
-    const cacNut = {
-      inline_keyboard: [
-        [
-          { text: '🏷️ Thêm nhãn', callback_data: `addlabel_${khach.id}` },
-          { text: '📋 Lịch sử', callback_data: `history_${khach.id}` }
-        ],
-        [
-          { text: '✅ Đã xử lý', callback_data: `done_${khach.id}` }
-        ]
-      ]
-    };
+const cacNut = {
+  inline_keyboard: [
+    [
+      { text: '⚡ Trả lời nhanh', callback_data: `quickreply_${khach.id}_${page.id}_${senderId}_${ketQuaDich.ngonNguGoc}` }
+    ],
+    [
+      { text: '🏷️ Thêm nhãn', callback_data: `addlabel_${khach.id}` },
+      { text: '📋 Lịch sử', callback_data: `history_${khach.id}` }
+    ],
+    [
+      { text: '✅ Đã xử lý', callback_data: `done_${khach.id}` }
+    ]
+  ]
+};
     
     // Gửi lên Telegram (reply vào thread cũ nếu có)
     let msg;
@@ -384,7 +387,7 @@ bot.on('message', async (msg) => {
   
   // Bỏ qua tin từ bot
   if (msg.from.is_bot) return;
-  
+
   // Bỏ qua các lệnh bot (bắt đầu bằng /)
   if (msg.text && msg.text.startsWith('/')) return;
 
@@ -538,7 +541,126 @@ bot.on('callback_query', async (query) => {
         message_id: query.message.message_id
       });
       await bot.answerCallbackQuery(query.id, { text: 'Đã hủy' });
+    } else if (action === 'quickreply') {
+  // Hiển thị menu quick replies
+  const customerId = parts[1];
+  const pageId = parts[2];
+  const senderId = parts[3];
+  const ngonNgu = parts[4] || 'en';
+  
+  try {
+    // Lấy danh sách quick replies
+    const qrResult = await pool.query('SELECT * FROM quick_replies ORDER BY key');
+    
+    if (qrResult.rows.length === 0) {
+      await bot.answerCallbackQuery(query.id, { text: '❌ Chưa có câu trả lời nhanh nào' });
+      return;
+    }
+    
+    // Tạo keyboard với các quick replies
+    const keyboard = [];
+    let row = [];
+    
+    for (let i = 0; i < qrResult.rows.length; i++) {
+      const qr = qrResult.rows[i];
+      row.push({
+        text: `${qr.emoji || '💬'} ${qr.key}`,
+        callback_data: `sendqr_${qr.id}_${pageId}_${senderId}_${ngonNgu}`
+      });
       
+      // 2 nút mỗi hàng
+      if (row.length === 2 || i === qrResult.rows.length - 1) {
+        keyboard.push(row);
+        row = [];
+      }
+    }
+    
+    // Thêm nút đóng
+    keyboard.push([{ text: '❌ Đóng', callback_data: 'close' }]);
+    
+    await bot.sendMessage(query.message.chat.id, 
+      '⚡ <b>Chọn câu trả lời nhanh:</b>', 
+      {
+        reply_to_message_id: query.message.message_id,
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: keyboard }
+      }
+    );
+    
+    await bot.answerCallbackQuery(query.id);
+    
+  } catch (error) {
+    console.error('Lỗi hiển thị quick replies:', error);
+    await bot.answerCallbackQuery(query.id, { text: '❌ Có lỗi xảy ra' });
+  }
+  
+} else if (action === 'sendqr') {
+  // Gửi quick reply
+  const qrId = parts[1];
+  const pageId = parts[2];
+  const senderId = parts[3];
+  const ngonNgu = parts[4] || 'en';
+  
+  try {
+    // Lấy quick reply
+    const qrResult = await pool.query('SELECT * FROM quick_replies WHERE id = $1', [qrId]);
+    
+    if (qrResult.rows.length === 0) {
+      await bot.answerCallbackQuery(query.id, { text: '❌ Không tìm thấy câu trả lời' });
+      return;
+    }
+    
+    const qr = qrResult.rows[0];
+    const page = pages.find(p => p.id === pageId);
+    
+    if (!page) {
+      await bot.answerCallbackQuery(query.id, { text: '❌ Không tìm thấy fanpage' });
+      return;
+    }
+    
+    // Chọn ngôn ngữ phù hợp
+    const tinNhan = ngonNgu === 'vi' ? qr.text_vi : qr.text_en;
+    
+    console.log(`📤 Gửi quick reply "${qr.key}" (${ngonNgu}):`, tinNhan);
+    
+    // Gửi về Facebook
+    const response = await axios.post(
+      `https://graph.facebook.com/v23.0/me/messages`,
+      {
+        recipient: { id: senderId },
+        message: { text: tinNhan },
+        messaging_type: 'RESPONSE'
+      },
+      {
+        params: { access_token: page.token }
+      }
+    );
+    
+    if (response.data.message_id) {
+      await bot.answerCallbackQuery(query.id, { text: `✅ Đã gửi: ${qr.emoji} ${qr.key}` });
+      
+      // Thông báo trong chat
+      await bot.sendMessage(query.message.chat.id, 
+        `✅ Đã gửi quick reply: ${qr.emoji}<code>${qr.key}</code>\n\n💬 "${tinNhan}"`,
+        {
+          reply_to_message_id: query.message.message_id,
+          parse_mode: 'HTML'
+        }
+      );
+      
+      console.log('✓ Đã gửi quick reply thành công');
+    }
+    
+  } catch (error) {
+    console.error('Lỗi gửi quick reply:', error);
+    await bot.answerCallbackQuery(query.id, { text: '❌ Lỗi gửi tin nhắn' });
+  }
+  
+} else if (action === 'close') {
+  await bot.deleteMessage(query.message.chat.id, query.message.message_id);
+  await bot.answerCallbackQuery(query.id);
+  
+  
     } else if (action === 'addlabel') {
       await bot.answerCallbackQuery(query.id, { text: 'Reply tin này và gõ: /label <tên-nhãn>' });
       
@@ -663,6 +785,76 @@ bot.onText(/\/labels/, async (msg) => {
     await bot.sendMessage(msg.chat.id, '❌ Lỗi lấy danh sách nhãn');
   }
 });
+// Lệnh xem quick replies
+bot.onText(/\/quickreplies/, async (msg) => {
+  if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
+  
+  try {
+    const result = await pool.query('SELECT * FROM quick_replies ORDER BY key');
+    
+    if (result.rows.length === 0) {
+      await bot.sendMessage(msg.chat.id, '📋 Chưa có câu trả lời nhanh nào');
+      return;
+    }
+    
+    let danhSach = '<b>⚡ DANH SÁCH TRẢ LỜI NHANH:</b>\n\n';
+    
+    for (const qr of result.rows) {
+      danhSach += `${qr.emoji || '💬'} <b>${qr.key}</b>\n`;
+      danhSach += `   🇻🇳 ${qr.text_vi}\n`;
+      danhSach += `   🇬🇧 ${qr.text_en}\n\n`;
+    }
+    
+    danhSach += '<i>Nhấn nút "⚡ Trả lời nhanh" dưới tin khách để sử dụng</i>';
+    
+    await bot.sendMessage(msg.chat.id, danhSach, { parse_mode: 'HTML' });
+    
+  } catch (error) {
+    console.error('Lỗi xem quick replies:', error);
+    await bot.sendMessage(msg.chat.id, '❌ Lỗi lấy danh sách');
+  }
+});
+
+// Lệnh thêm quick reply mới
+bot.onText(/\/addquick (.+)/, async (msg, match) => {
+  if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
+  
+  // Format: /addquick key|emoji|vi_text|en_text
+  const parts = match[1].split('|');
+  
+  if (parts.length !== 4) {
+    await bot.sendMessage(msg.chat.id, 
+      '❌ Sai format!\n\n' +
+      '<b>Dùng:</b> /addquick key|emoji|text_vi|text_en\n\n' +
+      '<b>Ví dụ:</b>\n' +
+      '<code>/addquick hello|👋|Xin chào|Hello</code>',
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+  
+  const [key, emoji, viText, enText] = parts.map(p => p.trim());
+  
+  try {
+    await pool.query(`
+      INSERT INTO quick_replies (key, emoji, text_vi, text_en, created_at)
+      VALUES ($1, $2, $3, $4, NOW())
+      ON CONFLICT (key) DO UPDATE SET emoji = $2, text_vi = $3, text_en = $4
+    `, [key, emoji, viText, enText]);
+    
+    await bot.sendMessage(msg.chat.id, 
+      `✅ Đã thêm quick reply: ${emoji}<code>${key}</code>`,
+      { parse_mode: 'HTML' }
+    );
+    
+    console.log(`✓ Đã thêm quick reply "${key}"`);
+    
+  } catch (error) {
+    console.error('Lỗi thêm quick reply:', error);
+    await bot.sendMessage(msg.chat.id, `❌ Lỗi: ${error.message}`);
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`\n${'='.repeat(50)}`);
   console.log(`🚀 Server đang chạy trên cổng ${PORT}`);
