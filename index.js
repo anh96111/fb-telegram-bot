@@ -8,6 +8,11 @@ const app = express();
 app.use(express.json());
 const http = require('http');
 const { Server } = require('socket.io');
+const multer = require('multer');
+const FormData = require('form-data');
+const fs = require('fs');
+const path = require('path');
+
 // Translation cache
 const translationCache = new Map();
 const CACHE_MAX_SIZE = 1000;
@@ -47,10 +52,25 @@ function saveToCache(text, targetLang, translation) {
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: process.env.WEB_URL || '*',
+    origin: '*', // Cho phép tất cả origin trong dev
+    methods: ['GET', 'POST'],
     credentials: true
+  },
+  transports: ['websocket', 'polling'] // Thêm fallback
+});
+
+// Cấu hình upload
+const upload = multer({
+  dest: 'uploads/',
+  limits: {
+    fileSize: 25 * 1024 * 1024 // 25MB
   }
 });
+
+// Tạo thư mục uploads nếu chưa có
+if (!fs.existsSync('uploads')) {
+  fs.mkdirSync('uploads');
+}
 
 // Lưu danh sách clients đang kết nối
 const connectedClients = new Set();
@@ -1702,6 +1722,124 @@ app.get('/api/customers/:customerId/labels', async (req, res) => {
     
   } catch (error) {
     console.error('API Error - get customer labels:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+// API: Upload file và gửi cho customer
+app.post('/api/conversations/:customerId/send-media', upload.single('file'), async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const { message } = req.body;
+    const file = req.file;
+    
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No file uploaded'
+      });
+    }
+    
+    console.log('📎 Uploading file:', file.originalname, file.mimetype);
+    
+    // Lấy thông tin customer
+    const customerResult = await pool.query(
+      'SELECT fb_id, page_id FROM customers WHERE id = $1',
+      [customerId]
+    );
+    
+    if (customerResult.rows.length === 0) {
+      // Xóa file tạm
+      fs.unlinkSync(file.path);
+      return res.status(404).json({
+        success: false,
+        error: 'Customer not found'
+      });
+    }
+    
+    const customer = customerResult.rows[0];
+    const page = pages.find(p => p.id === customer.page_id);
+    
+    if (!page) {
+      fs.unlinkSync(file.path);
+      return res.status(404).json({
+        success: false,
+        error: 'Page not found'
+      });
+    }
+    
+    // Xác định loại file
+    let attachmentType = 'file';
+    if (file.mimetype.startsWith('image/')) {
+      attachmentType = 'image';
+    } else if (file.mimetype.startsWith('video/')) {
+      attachmentType = 'video';
+    } else if (file.mimetype.startsWith('audio/')) {
+      attachmentType = 'audio';
+    }
+    
+    // Upload file lên Facebook
+    const formData = new FormData();
+    formData.append('recipient', JSON.stringify({ id: customer.fb_id }));
+    formData.append('message', JSON.stringify({
+      attachment: {
+        type: attachmentType,
+        payload: {
+          is_reusable: true
+        }
+      }
+    }));
+    formData.append('filedata', fs.createReadStream(file.path), {
+      filename: file.originalname,
+      contentType: file.mimetype
+    });
+    
+    const response = await axios.post(
+      'https://graph.facebook.com/v23.0/me/messages',
+      formData,
+      {
+        params: { access_token: page.token },
+        headers: formData.getHeaders()
+      }
+    );
+    
+    // Xóa file tạm
+    fs.unlinkSync(file.path);
+    
+    if (response.data.message_id) {
+      // Lưu vào database
+      await luuTinNhan(customerId, customer.page_id, 'admin', message || '', attachmentType, file.originalname);
+      
+      // Broadcast
+      broadcastToWeb('message_sent', {
+        customerId,
+        message: message || '',
+        mediaType: attachmentType,
+        mediaName: file.originalname,
+        timestamp: new Date().toISOString()
+      });
+      
+      res.json({
+        success: true,
+        data: {
+          messageId: response.data.message_id,
+          attachmentId: response.data.attachment_id
+        }
+      });
+    } else {
+      throw new Error('Failed to send media to Facebook');
+    }
+    
+  } catch (error) {
+    console.error('API Error - send media:', error);
+    
+    // Xóa file nếu có lỗi
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    
     res.status(500).json({
       success: false,
       error: error.message
