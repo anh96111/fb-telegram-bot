@@ -1234,24 +1234,49 @@ bot.onText(/\/addquick (.+)/, async (msg, match) => {
 });
 // ==================== API ENDPOINTS ====================
 
-// API: Lấy danh sách conversations
+// API: Lấy danh sách conversations (OPTIMIZED)
 app.get('/api/conversations', async (req, res) => {
   try {
-    const { page_id, status } = req.query;
+    const { page_id, status, limit = 50 } = req.query;
     
+    // Query với LEFT JOIN để lấy labels cùng lúc
     let query = `
-      SELECT DISTINCT ON (c.id)
+      SELECT 
         c.id,
         c.fb_id,
         c.name,
         c.avatar,
         c.page_id,
-        m.content as last_message,
-        m.created_at as last_message_at,
-        m.sender_type as last_sender
+        c.created_at,
+        (
+          SELECT json_agg(json_build_object('name', l.name, 'emoji', l.emoji, 'color', l.color))
+          FROM labels l
+          JOIN customer_labels cl ON l.id = cl.label_id
+          WHERE cl.customer_id = c.id
+        ) as labels,
+        (
+          SELECT content
+          FROM messages m
+          WHERE m.customer_id = c.id
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) as last_message,
+        (
+          SELECT created_at
+          FROM messages m
+          WHERE m.customer_id = c.id
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) as last_message_at,
+        (
+          SELECT sender_type
+          FROM messages m
+          WHERE m.customer_id = c.id
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) as last_sender
       FROM customers c
-      LEFT JOIN messages m ON c.id = m.customer_id
-      WHERE 1=1
+      WHERE EXISTS (SELECT 1 FROM messages WHERE customer_id = c.id)
     `;
     
     const params = [];
@@ -1262,23 +1287,19 @@ app.get('/api/conversations', async (req, res) => {
     }
     
     query += `
-      ORDER BY c.id, m.created_at DESC
-      LIMIT 100
+      ORDER BY (
+        SELECT created_at
+        FROM messages m
+        WHERE m.customer_id = c.id
+        ORDER BY m.created_at DESC
+        LIMIT 1
+      ) DESC NULLS LAST
+      LIMIT $${params.length + 1}
     `;
     
-    const result = await pool.query(query, params);
+    params.push(limit);
     
-    // Lấy labels cho mỗi customer
-    for (const customer of result.rows) {
-      const labelsResult = await pool.query(`
-        SELECT l.name, l.emoji, l.color
-        FROM labels l
-        JOIN customer_labels cl ON l.id = cl.label_id
-        WHERE cl.customer_id = $1
-      `, [customer.id]);
-      
-      customer.labels = labelsResult.rows;
-    }
+    const result = await pool.query(query, params);
     
     res.json({
       success: true,
@@ -1293,6 +1314,7 @@ app.get('/api/conversations', async (req, res) => {
     });
   }
 });
+
 
 // API: Lấy tin nhắn của 1 conversation
 app.get('/api/conversations/:customerId/messages', async (req, res) => {
