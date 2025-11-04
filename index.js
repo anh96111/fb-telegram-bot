@@ -510,7 +510,6 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
       if (type === 'image') {
         noiDung += `📷 <b>Ảnh</b>\n`;
         
-        // Gửi ảnh
         const cacNut = taoNutAction(khach.id, page.id, senderId, 'vi');
         
         let msg;
@@ -531,6 +530,7 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
         }
         
         await luuMapping(msg.message_id, page.id, senderId, khach.id, 'vi');
+        await luuTinNhan(khach.id, page.id, 'customer', caption || '', 'image', payload.url);
         
       } else if (type === 'video') {
         noiDung += `🎥 <b>Video</b>\n`;
@@ -555,6 +555,7 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
         }
         
         await luuMapping(msg.message_id, page.id, senderId, khach.id, 'vi');
+        await luuTinNhan(khach.id, page.id, 'customer', caption || '', 'video', payload.url);
         
       } else if (type === 'file') {
         noiDung += `📎 <b>File</b>\n`;
@@ -579,6 +580,7 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
         }
         
         await luuMapping(msg.message_id, page.id, senderId, khach.id, 'vi');
+        await luuTinNhan(khach.id, page.id, 'customer', caption || '', 'file', payload.url);
         
       } else if (type === 'audio') {
         noiDung += `🎵 <b>Audio</b>\n`;
@@ -603,10 +605,12 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
         }
         
         await luuMapping(msg.message_id, page.id, senderId, khach.id, 'vi');
+        await luuTinNhan(khach.id, page.id, 'customer', caption || '', 'audio', payload.url);
         
       } else {
         // Loại khác - gửi dạng text với link
         noiDung += `📌 <b>${type}</b>: <a href="${payload.url}">Xem tại đây</a>\n`;
+        await luuTinNhan(khach.id, page.id, 'customer', caption || '', type, payload.url);
       }
     }
     
@@ -616,6 +620,7 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
     console.error('Lỗi xử lý media:', error);
   }
 }
+
 
 // Hàm tạo nút action (tách riêng để tái sử dụng)
 function taoNutAction(customerId, pageId, senderId, ngonNgu) {
