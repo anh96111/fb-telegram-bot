@@ -6,6 +6,8 @@ const { Pool } = require('pg');
 
 const app = express();
 app.use(express.json());
+// Khởi động server
+const PORT = process.env.PORT || 3000;
 const http = require('http');
 const { Server } = require('socket.io');
 const multer = require('multer');
@@ -1176,8 +1178,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Khởi động server
-const PORT = process.env.PORT || 3000;
+
 // Lệnh thêm nhãn
 bot.onText(/\/label (.+)/, async (msg, match) => {
   if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
