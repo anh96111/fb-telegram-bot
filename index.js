@@ -1620,6 +1620,94 @@ app.post('/api/translate', async (req, res) => {
     });
   }
 });
+// API: Xóa label khỏi customer
+app.delete('/api/customers/:customerId/labels/:labelId', async (req, res) => {
+  try {
+    const { customerId, labelId } = req.params;
+    
+    await pool.query(
+      'DELETE FROM customer_labels WHERE customer_id = $1 AND label_id = $2',
+      [customerId, labelId]
+    );
+    
+    // Broadcast change
+    broadcastToWeb('label_removed', { customerId, labelId });
+    
+    res.json({ success: true });
+    
+  } catch (error) {
+    console.error('API Error - remove label:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// API: Tạo label mới
+app.post('/api/labels', async (req, res) => {
+  try {
+    const { name, emoji, color } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        error: 'Label name is required'
+      });
+    }
+    
+    const result = await pool.query(
+      'INSERT INTO labels (name, emoji, color, created_at) VALUES ($1, $2, $3, NOW()) RETURNING *',
+      [name.toLowerCase(), emoji || '🏷️', color || '#999999']
+    );
+    
+    res.json({
+      success: true,
+      data: result.rows[0]
+    });
+    
+  } catch (error) {
+    if (error.code === '23505') { // Duplicate key
+      return res.status(400).json({
+        success: false,
+        error: 'Label already exists'
+      });
+    }
+    
+    console.error('API Error - create label:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// API: Lấy labels của một customer
+app.get('/api/customers/:customerId/labels', async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    
+    const result = await pool.query(`
+      SELECT l.id, l.name, l.emoji, l.color
+      FROM labels l
+      JOIN customer_labels cl ON l.id = cl.label_id
+      WHERE cl.customer_id = $1
+      ORDER BY l.name
+    `, [customerId]);
+    
+    res.json({
+      success: true,
+      data: result.rows
+    });
+    
+  } catch (error) {
+    console.error('API Error - get customer labels:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 server.listen(PORT, () => {
   console.log(`\n${'='.repeat(50)}`);
