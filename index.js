@@ -251,7 +251,7 @@ async function luuMapping(telegramMsgId, pageId, senderId, customerId, ngonNgu) 
 }
 
 // Xử lý tin nhắn từ khách hàng
-async function xuLyTinNhanTuKhach(page, senderId, text) {
+async function xuLyTinNhanTuKhach(page, senderId, text, media = null) {
   try {
     // Lấy thông tin khách
     const khach = await layHoacTaoKhach(page.id, senderId, page.token);
@@ -295,20 +295,7 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
     noiDung += `\n<b>━━━━━━━━━━━━━━━━━━━━</b>`;
     
     // Tạo các nút
-const cacNut = {
-  inline_keyboard: [
-    [
-      { text: '⚡ Trả lời nhanh', callback_data: `quickreply_${khach.id}_${page.id}_${senderId}_${ketQuaDich.ngonNguGoc}` }
-    ],
-    [
-      { text: '🏷️ Thêm nhãn', callback_data: `addlabel_${khach.id}` },
-      { text: '📋 Lịch sử', callback_data: `history_${khach.id}` }
-    ],
-    [
-      { text: '✅ Đã xử lý', callback_data: `done_${khach.id}` }
-    ]
-  ]
-};
+const cacNut = taoNutAction(khach.id, page.id, senderId, ketQuaDich.ngonNguGoc);
     
     // Gửi lên Telegram (reply vào thread cũ nếu có)
     let msg;
@@ -336,6 +323,170 @@ const cacNut = {
     console.error('Lỗi xử lý tin nhắn từ khách:', error);
   }
 }
+// Xử lý media từ khách hàng
+async function xuLyMediaTuKhach(page, senderId, attachments, caption = '') {
+  try {
+    // Lấy thông tin khách
+    const khach = await layHoacTaoKhach(page.id, senderId, page.token);
+    const cacNhan = await layNhanKhach(khach.id);
+    
+    // Tạo chuỗi nhãn
+    const chuoiNhan = cacNhan.length > 0 
+      ? cacNhan.map(n => `${n.emoji || '🏷️'}<code>${n.name}</code>`).join(' ')
+      : '';
+    
+    // Kiểm tra thread cũ
+    const threadCu = await layThreadCu(khach.id, page.id);
+    
+    // Header tin nhắn
+    let noiDung = `<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>🏪 ${page.name}</b>
+${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+
+👤 <b>${khach.name}</b> (#${senderId.slice(-6)})
+🕐 <b>Thời gian:</b> ${new Date().toLocaleString('vi-VN')}
+`;
+
+    if (threadCu) {
+      const khoangCach = Math.floor((Date.now() - new Date(threadCu.created_at)) / (1000 * 60 * 60));
+      noiDung += `🔗 <b>Thread cũ:</b> ${khoangCach}h trước\n`;
+    }
+
+    noiDung += `\n<b>━━━━━━━━━━━━━━━━━━━━</b>\n`;
+    
+    // Xử lý từng attachment
+    for (const attachment of attachments) {
+      const type = attachment.type;
+      const payload = attachment.payload;
+      
+      if (type === 'image') {
+        noiDung += `📷 <b>Ảnh</b>\n`;
+        
+        // Gửi ảnh
+        const cacNut = taoNutAction(khach.id, page.id, senderId, 'vi');
+        
+        let msg;
+        if (threadCu) {
+          msg = await bot.sendPhoto(process.env.TELEGRAM_GROUP_ID, payload.url, {
+            caption: noiDung + (caption ? `\n💬 ${caption}` : ''),
+            reply_to_message_id: threadCu.thread_message_id,
+            reply_markup: cacNut,
+            parse_mode: 'HTML'
+          });
+        } else {
+          msg = await bot.sendPhoto(process.env.TELEGRAM_GROUP_ID, payload.url, {
+            caption: noiDung + (caption ? `\n💬 ${caption}` : ''),
+            reply_markup: cacNut,
+            parse_mode: 'HTML'
+          });
+          await luuThreadMoi(khach.id, page.id, msg.message_id);
+        }
+        
+        await luuMapping(msg.message_id, page.id, senderId, khach.id, 'vi');
+        
+      } else if (type === 'video') {
+        noiDung += `🎥 <b>Video</b>\n`;
+        
+        const cacNut = taoNutAction(khach.id, page.id, senderId, 'vi');
+        
+        let msg;
+        if (threadCu) {
+          msg = await bot.sendVideo(process.env.TELEGRAM_GROUP_ID, payload.url, {
+            caption: noiDung + (caption ? `\n💬 ${caption}` : ''),
+            reply_to_message_id: threadCu.thread_message_id,
+            reply_markup: cacNut,
+            parse_mode: 'HTML'
+          });
+        } else {
+          msg = await bot.sendVideo(process.env.TELEGRAM_GROUP_ID, payload.url, {
+            caption: noiDung + (caption ? `\n💬 ${caption}` : ''),
+            reply_markup: cacNut,
+            parse_mode: 'HTML'
+          });
+          await luuThreadMoi(khach.id, page.id, msg.message_id);
+        }
+        
+        await luuMapping(msg.message_id, page.id, senderId, khach.id, 'vi');
+        
+      } else if (type === 'file') {
+        noiDung += `📎 <b>File</b>\n`;
+        
+        const cacNut = taoNutAction(khach.id, page.id, senderId, 'vi');
+        
+        let msg;
+        if (threadCu) {
+          msg = await bot.sendDocument(process.env.TELEGRAM_GROUP_ID, payload.url, {
+            caption: noiDung + (caption ? `\n💬 ${caption}` : ''),
+            reply_to_message_id: threadCu.thread_message_id,
+            reply_markup: cacNut,
+            parse_mode: 'HTML'
+          });
+        } else {
+          msg = await bot.sendDocument(process.env.TELEGRAM_GROUP_ID, payload.url, {
+            caption: noiDung + (caption ? `\n💬 ${caption}` : ''),
+            reply_markup: cacNut,
+            parse_mode: 'HTML'
+          });
+          await luuThreadMoi(khach.id, page.id, msg.message_id);
+        }
+        
+        await luuMapping(msg.message_id, page.id, senderId, khach.id, 'vi');
+        
+      } else if (type === 'audio') {
+        noiDung += `🎵 <b>Audio</b>\n`;
+        
+        const cacNut = taoNutAction(khach.id, page.id, senderId, 'vi');
+        
+        let msg;
+        if (threadCu) {
+          msg = await bot.sendAudio(process.env.TELEGRAM_GROUP_ID, payload.url, {
+            caption: noiDung + (caption ? `\n💬 ${caption}` : ''),
+            reply_to_message_id: threadCu.thread_message_id,
+            reply_markup: cacNut,
+            parse_mode: 'HTML'
+          });
+        } else {
+          msg = await bot.sendAudio(process.env.TELEGRAM_GROUP_ID, payload.url, {
+            caption: noiDung + (caption ? `\n💬 ${caption}` : ''),
+            reply_markup: cacNut,
+            parse_mode: 'HTML'
+          });
+          await luuThreadMoi(khach.id, page.id, msg.message_id);
+        }
+        
+        await luuMapping(msg.message_id, page.id, senderId, khach.id, 'vi');
+        
+      } else {
+        // Loại khác - gửi dạng text với link
+        noiDung += `📌 <b>${type}</b>: <a href="${payload.url}">Xem tại đây</a>\n`;
+      }
+    }
+    
+    console.log(`✓ Đã chuyển ${attachments.length} media từ ${page.name} - ${khach.name} lên Telegram`);
+    
+  } catch (error) {
+    console.error('Lỗi xử lý media:', error);
+  }
+}
+
+// Hàm tạo nút action (tách riêng để tái sử dụng)
+function taoNutAction(customerId, pageId, senderId, ngonNgu) {
+  return {
+    inline_keyboard: [
+      [
+        { text: '⚡ Trả lời nhanh', callback_data: `quickreply_${customerId}_${pageId}_${senderId}_${ngonNgu}` }
+      ],
+      [
+        { text: '🏷️ Thêm nhãn', callback_data: `addlabel_${customerId}` },
+        { text: '📋 Lịch sử', callback_data: `history_${customerId}` }
+      ],
+      [
+        { text: '✅ Đã xử lý', callback_data: `done_${customerId}` }
+      ]
+    ]
+  };
+}
 
 // Webhook Facebook - Nhận tin nhắn từ khách
 app.post('/facebook/webhook', async (req, res) => {
@@ -352,10 +503,19 @@ app.post('/facebook/webhook', async (req, res) => {
       }
       
       for (const event of entry.messaging) {
-        if (event.message && event.message.text) {
-          await xuLyTinNhanTuKhach(page, event.sender.id, event.message.text);
-        }
-      }
+  if (event.message) {
+    // Xử lý text
+    if (event.message.text) {
+      await xuLyTinNhanTuKhach(page, event.sender.id, event.message.text, null);
+    }
+    
+    // Xử lý attachments (ảnh, video, file...)
+    if (event.message.attachments && event.message.attachments.length > 0) {
+      await xuLyMediaTuKhach(page, event.sender.id, event.message.attachments, event.message.text);
+    }
+  }
+}
+
     }
     res.status(200).send('OK');
   } else {
