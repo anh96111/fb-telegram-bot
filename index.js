@@ -2000,10 +2000,32 @@ app.post('/api/quickreplies', async (req, res) => {
   }
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n${'='.repeat(50)}`);
-  console.log(`🚀 Server đang chạy trên cổng ${PORT}`);
-  console.log(`📱 Bot Telegram đã sẵn sàng`);
-  console.log(`📄 Đang theo dõi ${pages.length} fanpage`);
-  console.log(`${'='.repeat(50)}\n`);
+// Delay server start để đảm bảo mọi thứ đã ready
+setTimeout(() => {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n${'='.repeat(50)}`);
+    console.log(`🚀 Server đang chạy trên cổng ${PORT}`);
+    console.log(`🌐 Listening on: http://0.0.0.0:${PORT}`);
+    console.log(`📱 Bot Telegram: Send-only mode`);
+    console.log(`📄 Đang theo dõi ${pages.length} fanpage`);
+    console.log(`✅ Ready to receive requests`);
+    console.log(`${'='.repeat(50)}\n`);
+  });
+}, 100);
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('⚠️ SIGTERM received, shutting down...');
+  server.close(() => {
+    console.log('✓ Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('⚠️ SIGINT received, shutting down...');
+  server.close(() => {
+    console.log('✓ Server closed');
+    process.exit(0);
+  });
 });
