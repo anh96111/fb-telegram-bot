@@ -5,6 +5,26 @@ const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
 
 const app = express();
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'ok',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/', (req, res) => {
+  res.status(200).json({
+    message: 'FB Telegram Bot API',
+    status: 'running',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Logging cho debug
+app.use((req, res, next) => {
+  console.log(`📥 ${req.method} ${req.path}`);
+  next();
+});
 app.use(express.json());
 // Khởi động server
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -1179,14 +1199,7 @@ bot.on('callback_query', async (query) => {
   }
 });
 }
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    pages: pages.length
-  });
-});
+
 
 if (ENABLE_TELEGRAM_POLLING) {
 // Lệnh thêm nhãn
