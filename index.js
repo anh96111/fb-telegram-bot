@@ -385,6 +385,10 @@ bot.on('message', async (msg) => {
   // Bỏ qua tin từ bot
   if (msg.from.is_bot) return;
   
+  // Bỏ qua các lệnh bot (bắt đầu bằng /)
+  if (msg.text && msg.text.startsWith('/')) return;
+
+  
   try {
     console.log('📩 Nhận reply từ admin:', msg.text);
     
