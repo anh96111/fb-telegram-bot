@@ -96,35 +96,67 @@ async function dichSangTiengAnh(text) {
 }
 
 // Hàm lấy thông tin khách hàng từ Facebook
-async function layThongTinKhachTuFB(pageToken, senderId) {
+async function layThongTinKhachTuFB(pageId, senderId, pageToken) {
   try {
+    // Cách 1: Lấy từ conversation (không cần quyền đặc biệt)
     const response = await axios.get(
-      `https://graph.facebook.com/v19.0/${senderId}`,
+      `https://graph.facebook.com/v23.0/${pageId}/conversations`,
       {
         params: {
-          fields: 'first_name,last_name',
+          fields: 'participants',
+          user_id: senderId,
           access_token: pageToken
         }
       }
     );
     
-    const firstName = response.data.first_name || '';
-    const lastName = response.data.last_name || '';
-    const name = `${firstName} ${lastName}`.trim() || `Khách ${senderId.slice(-6)}`;
+    if (response.data && response.data.data && response.data.data.length > 0) {
+      const participant = response.data.data[0].participants.data.find(p => p.id === senderId);
+      if (participant && participant.name) {
+        return {
+          name: participant.name,
+          avatar: null
+        };
+      }
+    }
     
-    return {
-      name: name,
-      avatar: null
+    // Cách 2: Fallback - Lấy từ PSID
+    try {
+      const userResponse = await axios.get(
+        `https://graph.facebook.com/v23.0/${senderId}`,
+        {
+          params: {
+            fields: 'name',
+            access_token: pageToken
+          }
+        }
+      );
+      
+      if (userResponse.data && userResponse.data.name) {
+        return {
+          name: userResponse.data.name,
+          avatar: null
+        };
+      }
+    } catch (e) {
+      console.log('Không thể lấy tên từ PSID');
+    }
+    
+    // Cách 3: Fallback cuối - Dùng ID
+    return { 
+      name: `Khách #${senderId.slice(-6)}`, 
+      avatar: null 
     };
+    
   } catch (error) {
-    console.error('Lỗi lấy thông tin khách:', error.message);
-    // Fallback: Dùng ID làm tên
+    console.error('Lỗi lấy thông tin khách:', error.response?.data || error.message);
     return { 
       name: `Khách #${senderId.slice(-6)}`, 
       avatar: null 
     };
   }
 }
+
 
 // Hàm lấy hoặc tạo khách hàng trong database
 async function layHoacTaoKhach(pageId, senderId, pageToken) {
@@ -137,7 +169,7 @@ async function layHoacTaoKhach(pageId, senderId, pageToken) {
     }
     
     // Lấy thông tin từ Facebook
-    const fbInfo = await layThongTinKhachTuFB(pageToken, senderId);
+    const fbInfo = await layThongTinKhachTuFB(pageId, senderId, pageToken);
     
     // Tạo mới trong database
     const insertQuery = `
@@ -342,15 +374,24 @@ app.get('/facebook/webhook', (req, res) => {
 
 // Xử lý khi admin reply trong Telegram
 bot.on('message', async (msg) => {
+  // Bỏ qua tin không phải từ group
   if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
+  
+  // Bỏ qua tin không phải reply
   if (!msg.reply_to_message) return;
   
+  // Bỏ qua tin từ bot
+  if (msg.from.is_bot) return;
+  
   try {
+    console.log('📩 Nhận reply từ admin:', msg.text);
+    
+    // Lấy mapping
     const query = 'SELECT * FROM conversation_mappings WHERE telegram_message_id = $1';
     const result = await pool.query(query, [msg.reply_to_message.message_id]);
     
     if (result.rows.length === 0) {
-      await bot.sendMessage(msg.chat.id, '❌ Không tìm thấy thông tin khách hàng', {
+      await bot.sendMessage(msg.chat.id, '❌ Không tìm thấy thông tin khách hàng để trả lời', {
         reply_to_message_id: msg.message_id
       });
       return;
@@ -366,20 +407,35 @@ bot.on('message', async (msg) => {
       return;
     }
     
-    // Hiển thị bản dịch để xác nhận
-    const tinNhanDaDich = await dichSangTiengAnh(msg.text);
-    const confirmId = `${Date.now()}_${mapping.fb_sender_id}`;
+    console.log('🔄 Đang dịch tin nhắn...');
     
+    // Dịch sang tiếng Anh
+    const tinNhanDaDich = await dichSangTiengAnh(msg.text);
+    
+    console.log('✓ Đã dịch:', tinNhanDaDich);
+    
+    // Tạo ID xác nhận
+    const confirmId = `${Date.now()}_${mapping.fb_sender_id}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Lưu vào pending
     await pool.query(`
       INSERT INTO pending_messages (confirm_id, page_id, fb_sender_id, original_text, translated_text, created_at)
       VALUES ($1, $2, $3, $4, $5, NOW())
     `, [confirmId, mapping.page_id, mapping.fb_sender_id, msg.text, tinNhanDaDich]);
     
+    console.log('✓ Đã lưu pending message:', confirmId);
+    
+    // Hiển thị xác nhận
     const xacNhanMessage = `
 📝 <b>Xác nhận bản dịch:</b>
 
-🇻🇳 Tin gốc: "${msg.text}"
-🇬🇧 Bản dịch: "${tinNhanDaDich}"
+🇻🇳 <b>Tin gốc:</b>
+<code>${msg.text}</code>
+
+🇬🇧 <b>Bản dịch:</b>
+<code>${tinNhanDaDich}</code>
+
+Bạn muốn gửi tin này không?
     `;
     
     await bot.sendMessage(msg.chat.id, xacNhanMessage, {
@@ -395,18 +451,30 @@ bot.on('message', async (msg) => {
       }
     });
     
+    console.log('✓ Đã gửi tin xác nhận');
+    
   } catch (error) {
-    console.error('Lỗi xử lý reply:', error);
+    console.error('❌ Lỗi xử lý reply:', error);
+    await bot.sendMessage(msg.chat.id, `❌ Lỗi: ${error.message}`, {
+      reply_to_message_id: msg.message_id
+    });
   }
 });
 
 // Xử lý callback query
 bot.on('callback_query', async (query) => {
-  const data = query.data;
-  const [action, id] = data.split('_');
-  
-  if (action === 'send') {
-    try {
+  try {
+    const data = query.data;
+    console.log('🔘 Nhận callback:', data);
+    
+    const parts = data.split('_');
+    const action = parts[0];
+    const id = parts.slice(1).join('_'); // Lấy phần còn lại làm ID
+    
+    if (action === 'send') {
+      console.log('📤 Đang gửi tin nhắn...');
+      
+      // Lấy pending message
       const result = await pool.query('SELECT * FROM pending_messages WHERE confirm_id = $1', [id]);
       
       if (result.rows.length === 0) {
@@ -417,38 +485,71 @@ bot.on('callback_query', async (query) => {
       const pending = result.rows[0];
       const page = pages.find(p => p.id === pending.page_id);
       
+      if (!page) {
+        await bot.answerCallbackQuery(query.id, { text: '❌ Không tìm thấy fanpage' });
+        return;
+      }
+      
+      console.log('📮 Gửi đến Facebook:', pending.fb_sender_id);
+      
+      // Gửi về Facebook
       const response = await axios.post(
-        `https://graph.facebook.com/v19.0/me/messages`,
+        `https://graph.facebook.com/v23.0/me/messages`,
         {
           recipient: { id: pending.fb_sender_id },
-          message: { text: pending.translated_text }
+          message: { text: pending.translated_text },
+          messaging_type: 'RESPONSE'
         },
-        { params: { access_token: page.token } }
+        {
+          params: { access_token: page.token }
+        }
       );
       
+      console.log('✓ Facebook response:', response.data);
+      
       if (response.data.message_id) {
+        // Xóa pending
         await pool.query('DELETE FROM pending_messages WHERE confirm_id = $1', [id]);
+        
+        // Cập nhật message
         await bot.editMessageText(
-          `✅ <b>Đã gửi!</b>\n\n🇬🇧 "${pending.translated_text}"`,
+          `✅ <b>Đã gửi thành công!</b>\n\n🇬🇧 <code>${pending.translated_text}</code>`,
           {
             chat_id: query.message.chat.id,
             message_id: query.message.message_id,
             parse_mode: 'HTML'
           }
         );
+        
         await bot.answerCallbackQuery(query.id, { text: '✅ Đã gửi!' });
+        console.log('✓ Hoàn thành gửi tin');
       }
-    } catch (error) {
-      console.error('Lỗi gửi tin:', error);
-      await bot.answerCallbackQuery(query.id, { text: '❌ Lỗi gửi tin nhắn' });
+      
+    } else if (action === 'cancel') {
+      await pool.query('DELETE FROM pending_messages WHERE confirm_id = $1', [id]);
+      await bot.editMessageText('❌ Đã hủy gửi tin nhắn', {
+        chat_id: query.message.chat.id,
+        message_id: query.message.message_id
+      });
+      await bot.answerCallbackQuery(query.id, { text: 'Đã hủy' });
+      
+    } else if (action === 'addlabel') {
+      await bot.answerCallbackQuery(query.id, { text: 'Reply tin này và gõ: /label <tên-nhãn>' });
+      
+    } else if (action === 'history') {
+      await bot.answerCallbackQuery(query.id, { text: 'Tính năng đang phát triển' });
+      
+    } else if (action === 'done') {
+      await bot.editMessageReplyMarkup(
+        { inline_keyboard: [[{ text: '✅ Đã xử lý', callback_data: 'noop' }]] },
+        { chat_id: query.message.chat.id, message_id: query.message.message_id }
+      );
+      await bot.answerCallbackQuery(query.id, { text: 'Đã đánh dấu hoàn thành' });
     }
-  } else if (action === 'cancel') {
-    await pool.query('DELETE FROM pending_messages WHERE confirm_id = $1', [id]);
-    await bot.editMessageText('❌ Đã hủy', {
-      chat_id: query.message.chat.id,
-      message_id: query.message.message_id
-    });
-    await bot.answerCallbackQuery(query.id, { text: 'Đã hủy' });
+    
+  } catch (error) {
+    console.error('❌ Lỗi callback query:', error);
+    await bot.answerCallbackQuery(query.id, { text: '❌ Có lỗi xảy ra' });
   }
 });
 
