@@ -104,25 +104,13 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-// Khởi tạo Telegram bot
+// Khởi tạo Telegram bot (send-only mode)
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { 
-  polling: {
-    interval: 300,
-    autoStart: true,
-    params: {
-      timeout: 10
-    }
-  }
+  polling: false
 });
 
-// Xử lý lỗi polling
-bot.on('polling_error', (error) => {
-  console.log('⚠️ Telegram polling error:', error.code);
-  if (error.code === 'ETELEGRAM') {
-    console.log('⚠️ Another instance is running, using webhook mode instead');
-    bot.stopPolling();
-  }
-});
+console.log('🤖 Telegram bot: Send-only mode (notifications to Telegram)');
+
 
 // Danh sách các fanpage
 const pages = [];
