@@ -7,7 +7,8 @@ const { Pool } = require('pg');
 const app = express();
 app.use(express.json());
 // Khởi động server
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+console.log('🔧 PORT detected:', PORT);
 const http = require('http');
 const { Server } = require('socket.io');
 const multer = require('multer');
@@ -106,12 +107,19 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-// Khởi tạo Telegram bot (send-only mode)
+// Khởi tạo Telegram bot
+const ENABLE_TELEGRAM_POLLING = process.env.NODE_ENV !== 'production';
+
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { 
-  polling: false
+  polling: ENABLE_TELEGRAM_POLLING
 });
 
-console.log('🤖 Telegram bot: Send-only mode (notifications to Telegram)');
+if (ENABLE_TELEGRAM_POLLING) {
+  console.log('🤖 Telegram bot: Polling mode (local development)');
+} else {
+  console.log('🤖 Telegram bot: Send-only mode (production)');
+}
+
 
 
 // Danh sách các fanpage
@@ -708,6 +716,7 @@ app.get('/facebook/webhook', (req, res) => {
 });
 
 // Xử lý khi admin reply trong Telegram
+if (ENABLE_TELEGRAM_POLLING) {
 bot.on('message', async (msg) => {
   // Bỏ qua tin không phải từ group
   if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
@@ -799,8 +808,9 @@ Bạn muốn gửi tin này không?
     });
   }
 });
-
+}
 // Xử lý callback query
+if (ENABLE_TELEGRAM_POLLING) {
 bot.on('callback_query', async (query) => {
   try {
     const data = query.data;
@@ -1168,7 +1178,7 @@ bot.on('callback_query', async (query) => {
     await bot.answerCallbackQuery(query.id, { text: '❌ Có lỗi xảy ra' });
   }
 });
-
+}
 // Health check
 app.get('/health', (req, res) => {
   res.json({ 
@@ -1178,7 +1188,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-
+if (ENABLE_TELEGRAM_POLLING) {
 // Lệnh thêm nhãn
 bot.onText(/\/label (.+)/, async (msg, match) => {
   if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
@@ -1244,7 +1254,7 @@ bot.onText(/\/label (.+)/, async (msg, match) => {
     });
   }
 });
-
+}
 // Lệnh xem danh sách nhãn
 bot.onText(/\/labels/, async (msg) => {
   if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
