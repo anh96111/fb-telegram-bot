@@ -75,12 +75,20 @@ function saveToCache(text, targetLang, translation) {
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: '*', // Cho phép tất cả origin trong dev
+    origin: [
+      'https://dashboard-production-fd71.up.railway.app',
+      'http://localhost:3001',
+      'http://localhost:3000',
+      process.env.FRONTEND_URL
+    ],
     methods: ['GET', 'POST'],
-    credentials: true
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization']
   },
-  transports: ['websocket', 'polling'] // Thêm fallback
+  transports: ['polling', 'websocket'], // Đảo thứ tự: polling trước
+  allowEIO3: true
 });
+
 
 // Cấu hình upload
 const upload = multer({
@@ -117,9 +125,17 @@ function broadcastToWeb(event, data) {
 // CORS cho phép web gọi API
 const cors = require('cors');
 app.use(cors({
-  origin: process.env.WEB_URL || '*',
-  credentials: true
+  origin: [
+    'https://dashboard-production-fd71.up.railway.app',
+    'http://localhost:3001',
+    'http://localhost:3000',
+    process.env.FRONTEND_URL
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
 
 // Kết nối database
 const pool = new Pool({
