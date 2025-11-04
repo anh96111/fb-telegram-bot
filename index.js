@@ -7,6 +7,42 @@ const { Pool } = require('pg');
 
 const app = express();
 app.use(express.json());
+const http = require('http');
+const { Server } = require('socket.io');
+
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: process.env.WEB_URL || '*',
+    credentials: true
+  }
+});
+
+// Lưu danh sách clients đang kết nối
+const connectedClients = new Set();
+
+io.on('connection', (socket) => {
+  console.log('✓ Web client connected:', socket.id);
+  connectedClients.add(socket.id);
+  
+  socket.on('disconnect', () => {
+    console.log('✗ Web client disconnected:', socket.id);
+    connectedClients.delete(socket.id);
+  });
+});
+
+// Hàm gửi tin nhắn mới đến tất cả web clients
+function broadcastToWeb(event, data) {
+  io.emit(event, data);
+  console.log(`📡 Broadcasted ${event} to ${connectedClients.size} clients`);
+}
+
+// CORS cho phép web gọi API
+const cors = require('cors');
+app.use(cors({
+  origin: process.env.WEB_URL || '*',
+  credentials: true
+}));
 
 // Kết nối database
 const pool = new Pool({
@@ -330,7 +366,19 @@ const cacNut = taoNutAction(khach.id, page.id, senderId, ketQuaDich.ngonNguGoc);
     // Lưu tin nhắn vào database
     await luuTinNhan(khach.id, page.id, 'customer', text, null, null, ketQuaDich.daDich ? ketQuaDich.banDich : null);
     console.log(`✓ Đã chuyển tin nhắn từ ${page.name} - ${khach.name} lên Telegram`);
-    
+    // Broadcast đến web
+broadcastToWeb('new_message', {
+  customerId: khach.id,
+  customerName: khach.name,
+  pageId: page.id,
+  pageName: page.name,
+  message: text,
+  translated: ketQuaDich.daDich ? ketQuaDich.banDich : null,
+  language: ketQuaDich.ngonNguGoc,
+  labels: cacNhan,
+  timestamp: new Date().toISOString()
+});
+
   } catch (error) {
     console.error('Lỗi xử lý tin nhắn từ khách:', error);
   }
@@ -1184,8 +1232,268 @@ bot.onText(/\/addquick (.+)/, async (msg, match) => {
     await bot.sendMessage(msg.chat.id, `❌ Lỗi: ${error.message}`);
   }
 });
+// ==================== API ENDPOINTS ====================
 
-app.listen(PORT, () => {
+// API: Lấy danh sách conversations
+app.get('/api/conversations', async (req, res) => {
+  try {
+    const { page_id, status } = req.query;
+    
+    let query = `
+      SELECT DISTINCT ON (c.id)
+        c.id,
+        c.fb_id,
+        c.name,
+        c.avatar,
+        c.page_id,
+        m.content as last_message,
+        m.created_at as last_message_at,
+        m.sender_type as last_sender
+      FROM customers c
+      LEFT JOIN messages m ON c.id = m.customer_id
+      WHERE 1=1
+    `;
+    
+    const params = [];
+    
+    if (page_id) {
+      params.push(page_id);
+      query += ` AND c.page_id = $${params.length}`;
+    }
+    
+    query += `
+      ORDER BY c.id, m.created_at DESC
+      LIMIT 100
+    `;
+    
+    const result = await pool.query(query, params);
+    
+    // Lấy labels cho mỗi customer
+    for (const customer of result.rows) {
+      const labelsResult = await pool.query(`
+        SELECT l.name, l.emoji, l.color
+        FROM labels l
+        JOIN customer_labels cl ON l.id = cl.label_id
+        WHERE cl.customer_id = $1
+      `, [customer.id]);
+      
+      customer.labels = labelsResult.rows;
+    }
+    
+    res.json({
+      success: true,
+      data: result.rows
+    });
+    
+  } catch (error) {
+    console.error('API Error - conversations:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// API: Lấy tin nhắn của 1 conversation
+app.get('/api/conversations/:customerId/messages', async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const { limit = 50 } = req.query;
+    
+    const result = await pool.query(`
+      SELECT 
+        id,
+        sender_type,
+        content,
+        media_type,
+        media_url,
+        translated_text,
+        created_at
+      FROM messages
+      WHERE customer_id = $1
+      ORDER BY created_at DESC
+      LIMIT $2
+    `, [customerId, limit]);
+    
+    res.json({
+      success: true,
+      data: result.rows.reverse() // Đảo ngược để tin cũ lên đầu
+    });
+    
+  } catch (error) {
+    console.error('API Error - messages:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// API: Gửi tin nhắn
+app.post('/api/conversations/:customerId/send', async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const { message, translate } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({
+        success: false,
+        error: 'Message is required'
+      });
+    }
+    
+    // Lấy thông tin customer
+    const customerResult = await pool.query(
+      'SELECT fb_id, page_id FROM customers WHERE id = $1',
+      [customerId]
+    );
+    
+    if (customerResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Customer not found'
+      });
+    }
+    
+    const customer = customerResult.rows[0];
+    const page = pages.find(p => p.id === customer.page_id);
+    
+    if (!page) {
+      return res.status(404).json({
+        success: false,
+        error: 'Page not found'
+      });
+    }
+    
+    // Dịch nếu cần
+    let finalMessage = message;
+    if (translate) {
+      finalMessage = await dichSangTiengAnh(message);
+    }
+    
+    // Gửi đến Facebook
+    const response = await axios.post(
+      `https://graph.facebook.com/v23.0/me/messages`,
+      {
+        recipient: { id: customer.fb_id },
+        message: { text: finalMessage },
+        messaging_type: 'RESPONSE'
+      },
+      {
+        params: { access_token: page.token }
+      }
+    );
+    
+    if (response.data.message_id) {
+      // Lưu vào database
+      await luuTinNhan(customerId, customer.page_id, 'admin', finalMessage);
+      
+      // Broadcast đến các clients khác
+      broadcastToWeb('message_sent', {
+        customerId,
+        message: finalMessage,
+        originalMessage: message,
+        timestamp: new Date().toISOString()
+      });
+      
+      res.json({
+        success: true,
+        data: {
+          messageId: response.data.message_id,
+          message: finalMessage
+        }
+      });
+    } else {
+      throw new Error('Failed to send message to Facebook');
+    }
+    
+  } catch (error) {
+    console.error('API Error - send message:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// API: Lấy danh sách labels
+app.get('/api/labels', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, name, emoji, color FROM labels ORDER BY name'
+    );
+    
+    res.json({
+      success: true,
+      data: result.rows
+    });
+    
+  } catch (error) {
+    console.error('API Error - labels:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// API: Thêm label cho customer
+app.post('/api/customers/:customerId/labels', async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const { labelId } = req.body;
+    
+    await pool.query(`
+      INSERT INTO customer_labels (customer_id, label_id, added_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (customer_id, label_id) DO NOTHING
+    `, [customerId, labelId]);
+    
+    res.json({
+      success: true
+    });
+    
+  } catch (error) {
+    console.error('API Error - add label:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// API: Lấy quick replies
+app.get('/api/quickreplies', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, key, emoji, text_vi, text_en FROM quick_replies ORDER BY key'
+    );
+    
+    res.json({
+      success: true,
+      data: result.rows
+    });
+    
+  } catch (error) {
+    console.error('API Error - quick replies:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// API: Health check
+app.get('/api/health', (req, res) => {
+  res.json({
+    success: true,
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    connectedClients: connectedClients.size
+  });
+});
+
+server.listen(PORT, () => {
   console.log(`\n${'='.repeat(50)}`);
   console.log(`🚀 Server đang chạy trên cổng ${PORT}`);
   console.log(`📱 Bot Telegram đã sẵn sàng`);
