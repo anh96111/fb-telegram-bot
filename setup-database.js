@@ -151,6 +151,29 @@ async function setupDatabase() {
     console.log('✓ Đã tạo quick replies mẫu\n');
     
     console.log('='.repeat(50));
+    // Bảng tin nhắn (để lưu lịch sử)
+console.log('📋 Tạo bảng messages...');
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS messages (
+    id SERIAL PRIMARY KEY,
+    customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE,
+    page_id VARCHAR(255) NOT NULL,
+    sender_type VARCHAR(20) NOT NULL,
+    content TEXT,
+    media_type VARCHAR(50),
+    media_url TEXT,
+    translated_text TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+  )
+`);
+
+await pool.query(`
+  CREATE INDEX IF NOT EXISTS idx_messages_customer 
+  ON messages(customer_id, created_at DESC)
+`);
+
+console.log('✓ Đã tạo bảng messages\n');
+
     console.log('🎉 HOÀN THÀNH! Database đã sẵn sàng.');
     console.log('='.repeat(50) + '\n');
     

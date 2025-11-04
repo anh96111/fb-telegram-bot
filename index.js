@@ -249,6 +249,17 @@ async function luuMapping(telegramMsgId, pageId, senderId, customerId, ngonNgu) 
     console.error('Lỗi lưu mapping:', error.message);
   }
 }
+// Hàm lưu tin nhắn vào database
+async function luuTinNhan(customerId, pageId, senderType, content, mediaType = null, mediaUrl = null, translatedText = null) {
+  try {
+    await pool.query(`
+      INSERT INTO messages (customer_id, page_id, sender_type, content, media_type, media_url, translated_text, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+    `, [customerId, pageId, senderType, content, mediaType, mediaUrl, translatedText]);
+  } catch (error) {
+    console.error('Lỗi lưu tin nhắn:', error.message);
+  }
+}
 
 // Xử lý tin nhắn từ khách hàng
 async function xuLyTinNhanTuKhach(page, senderId, text, media = null) {
@@ -316,7 +327,8 @@ const cacNut = taoNutAction(khach.id, page.id, senderId, ketQuaDich.ngonNguGoc);
     
     // Lưu mapping
     await luuMapping(msg.message_id, page.id, senderId, khach.id, ketQuaDich.ngonNguGoc);
-    
+    // Lưu tin nhắn vào database
+    await luuTinNhan(khach.id, page.id, 'customer', text, null, null, ketQuaDich.daDich ? ketQuaDich.banDich : null);
     console.log(`✓ Đã chuyển tin nhắn từ ${page.name} - ${khach.name} lên Telegram`);
     
   } catch (error) {
@@ -679,7 +691,15 @@ bot.on('callback_query', async (query) => {
       if (response.data.message_id) {
         // Xóa pending
         await pool.query('DELETE FROM pending_messages WHERE confirm_id = $1', [id]);
-        
+        // Lưu tin nhắn vào database
+      const customerResult = await pool.query(
+        'SELECT id FROM customers WHERE fb_id = $1 AND page_id = $2',
+        [pending.fb_sender_id, pending.page_id]
+      );
+      if (customerResult.rows.length > 0) {
+        await luuTinNhan(customerResult.rows[0].id, pending.page_id, 'admin', pending.translated_text);
+      }
+
         // Cập nhật message
         await bot.editMessageText(
           `✅ <b>Đã gửi thành công!</b>\n\n🇬🇧 <code>${pending.translated_text}</code>`,
@@ -825,7 +845,157 @@ bot.on('callback_query', async (query) => {
       await bot.answerCallbackQuery(query.id, { text: 'Reply tin này và gõ: /label <tên-nhãn>' });
       
     } else if (action === 'history') {
-      await bot.answerCallbackQuery(query.id, { text: 'Tính năng đang phát triển' });
+  const customerId = id;
+  
+  try {
+    // Hiển thị menu lọc
+    const keyboard = [
+      [
+        { text: '📅 Hôm nay', callback_data: `historyfilter_${customerId}_today` },
+        { text: '📅 3 ngày', callback_data: `historyfilter_${customerId}_3days` }
+      ],
+      [
+        { text: '📅 7 ngày', callback_data: `historyfilter_${customerId}_7days` },
+        { text: '📅 30 ngày', callback_data: `historyfilter_${customerId}_30days` }
+      ],
+      [
+        { text: '📅 Tất cả', callback_data: `historyfilter_${customerId}_all` }
+      ],
+      [
+        { text: '❌ Đóng', callback_data: 'close' }
+      ]
+    ];
+    
+    await bot.sendMessage(query.message.chat.id,
+      '📋 <b>Chọn khoảng thời gian:</b>',
+      {
+        reply_to_message_id: query.message.message_id,
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: keyboard }
+      }
+    );
+    
+    await bot.answerCallbackQuery(query.id);
+    
+  } catch (error) {
+    console.error('Lỗi hiển thị menu lịch sử:', error);
+    await bot.answerCallbackQuery(query.id, { text: '❌ Có lỗi xảy ra' });
+  }
+  
+} else if (action === 'historyfilter') {
+  const customerId = parts[1];
+  const filter = parts[2];
+  
+  try {
+    // Xác định khoảng thời gian
+    let timeCondition = '';
+    let filterName = '';
+    
+    switch(filter) {
+      case 'today':
+        timeCondition = "AND created_at >= CURRENT_DATE";
+        filterName = 'Hôm nay';
+        break;
+      case '3days':
+        timeCondition = "AND created_at >= NOW() - INTERVAL '3 days'";
+        filterName = '3 ngày qua';
+        break;
+      case '7days':
+        timeCondition = "AND created_at >= NOW() - INTERVAL '7 days'";
+        filterName = '7 ngày qua';
+        break;
+      case '30days':
+        timeCondition = "AND created_at >= NOW() - INTERVAL '30 days'";
+        filterName = '30 ngày qua';
+        break;
+      case 'all':
+        timeCondition = '';
+        filterName = 'Tất cả';
+        break;
+    }
+    
+    // Lấy thông tin khách
+    const customerInfo = await pool.query('SELECT name FROM customers WHERE id = $1', [customerId]);
+    const customerName = customerInfo.rows[0]?.name || 'Unknown';
+    
+    // Lấy tin nhắn
+    const messagesQuery = `
+      SELECT sender_type, content, media_type, translated_text, created_at
+      FROM messages
+      WHERE customer_id = $1 ${timeCondition}
+      ORDER BY created_at DESC
+      LIMIT 50
+    `;
+    
+    const result = await pool.query(messagesQuery, [customerId]);
+    
+    if (result.rows.length === 0) {
+      await bot.answerCallbackQuery(query.id, { text: '❌ Không có tin nhắn nào' });
+      return;
+    }
+    
+    // Format lịch sử
+    let lichSu = `📜 <b>LỊCH SỬ CHAT - ${customerName}</b>\n`;
+    lichSu += `🕐 <b>${filterName}</b> (${result.rows.length} tin)\n`;
+    lichSu += `${'━'.repeat(30)}\n\n`;
+    
+    // Đảo ngược để hiển thị từ cũ đến mới
+    const messages = result.rows.reverse();
+    
+    for (const msg of messages) {
+      const time = new Date(msg.created_at).toLocaleString('vi-VN', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+      
+      const icon = msg.sender_type === 'customer' ? '👤' : '🤖';
+      const sender = msg.sender_type === 'customer' ? 'Khách' : 'Bạn';
+      
+      lichSu += `${icon} <b>${sender}</b> • ${time}\n`;
+      
+      if (msg.media_type) {
+        lichSu += `📎 ${msg.media_type}\n`;
+      }
+      
+      if (msg.content) {
+        const content = msg.content.length > 100 
+          ? msg.content.substring(0, 100) + '...' 
+          : msg.content;
+        lichSu += `💬 ${content}\n`;
+      }
+      
+      if (msg.translated_text && msg.sender_type === 'customer') {
+        const trans = msg.translated_text.length > 80
+          ? msg.translated_text.substring(0, 80) + '...'
+          : msg.translated_text;
+        lichSu += `🇻🇳 ${trans}\n`;
+      }
+      
+      lichSu += `\n`;
+      
+      // Telegram giới hạn 4096 ký tự
+      if (lichSu.length > 3800) {
+        lichSu += `\n<i>... và ${messages.length - messages.indexOf(msg) - 1} tin nữa</i>`;
+        break;
+      }
+    }
+    
+    lichSu += `${'━'.repeat(30)}`;
+    
+    await bot.sendMessage(query.message.chat.id, lichSu, {
+      reply_to_message_id: query.message.message_id,
+      parse_mode: 'HTML'
+    });
+    
+    await bot.answerCallbackQuery(query.id, { text: '✅ Đã tải lịch sử' });
+    
+  } catch (error) {
+    console.error('Lỗi lấy lịch sử:', error);
+    await bot.answerCallbackQuery(query.id, { text: '❌ Có lỗi xảy ra' });
+  }
+
       
     } else if (action === 'done') {
       await bot.editMessageReplyMarkup(
