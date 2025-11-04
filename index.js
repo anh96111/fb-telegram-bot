@@ -2,13 +2,47 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
-const translate = require('translate-google');
 const { Pool } = require('pg');
 
 const app = express();
 app.use(express.json());
 const http = require('http');
 const { Server } = require('socket.io');
+// Translation cache
+const translationCache = new Map();
+const CACHE_MAX_SIZE = 1000;
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 giờ
+
+function getCacheKey(text, targetLang) {
+  return `${text.toLowerCase().trim()}_${targetLang}`;
+}
+
+function getFromCache(text, targetLang) {
+  const key = getCacheKey(text, targetLang);
+  const cached = translationCache.get(key);
+  
+  if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
+    console.log('✓ Cache hit:', text.substring(0, 30));
+    return cached.translation;
+  }
+  
+  return null;
+}
+
+function saveToCache(text, targetLang, translation) {
+  const key = getCacheKey(text, targetLang);
+  
+  // Giới hạn cache size
+  if (translationCache.size >= CACHE_MAX_SIZE) {
+    const firstKey = translationCache.keys().next().value;
+    translationCache.delete(firstKey);
+  }
+  
+  translationCache.set(key, {
+    translation,
+    timestamp: Date.now()
+  });
+}
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -67,69 +101,102 @@ for (let i = 1; i <= 10; i++) {
 
 console.log(`✓ Đã cấu hình ${pages.length} fanpage`);
 
-// Hàm dịch sang tiếng Việt
+// Hàm dịch sang tiếng Việt (Self-hosted LibreTranslate)
 async function dichSangTiengViet(text) {
   if (!text || text.trim() === '') {
     return { banDich: text, ngonNguGoc: 'unknown', daDich: false };
   }
   
   try {
-    // Dịch sang tiếng Việt
-    const result = await translate(text, { to: 'vi' });
+    // Detect tiếng Việt
+    if (/[ăâđêôơưĂÂĐÊÔƠƯ]/.test(text)) {
+      return { banDich: text, ngonNguGoc: 'vi', daDich: false };
+    }
     
-    // Detect ngôn ngữ bằng cách dịch sang tiếng Anh và so sánh
-    let ngonNguGoc = 'en';
-    
-    // Nếu bản dịch giống y hệt bản gốc -> đã là tiếng Việt
-    if (result.toLowerCase().trim() === text.toLowerCase().trim()) {
-      ngonNguGoc = 'vi';
+    // Kiểm tra cache trước
+    const cached = getFromCache(text, 'vi');
+    if (cached) {
       return {
-        banDich: text,
-        ngonNguGoc: 'vi',
-        daDich: false
+        banDich: cached,
+        ngonNguGoc: 'en',
+        daDich: true
       };
     }
     
-    // Detect ngôn ngữ đơn giản
-    if (/[ăâđêôơưĂÂĐÊÔƠƯ]/.test(text)) {
-      ngonNguGoc = 'vi';
-    } else if (/[\u4e00-\u9fa5]/.test(text)) {
-      ngonNguGoc = 'zh';
-    } else if (/[\u3040-\u309f\u30a0-\u30ff]/.test(text)) {
-      ngonNguGoc = 'ja';
-    } else if (/[\uac00-\ud7af]/.test(text)) {
-      ngonNguGoc = 'ko';
+    const translateUrl = process.env.LIBRETRANSLATE_URL || 'https://libretranslate.com';
+    
+    const response = await axios.post(`${translateUrl}/translate`, {
+      q: text,
+      source: 'auto',
+      target: 'vi',
+      format: 'text'
+    }, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 15000
+    });
+    
+    if (response.data && response.data.translatedText) {
+      const translatedText = response.data.translatedText;
+      const detectedLang = response.data.detectedLanguage?.language || 'en';
+      
+      // Lưu vào cache
+      saveToCache(text, 'vi', translatedText);
+      
+      return {
+        banDich: translatedText,
+        ngonNguGoc: detectedLang,
+        daDich: true
+      };
     }
     
-    return {
-      banDich: result,
-      ngonNguGoc: ngonNguGoc,
-      daDich: true
-    };
+    throw new Error('Translation response invalid');
+    
   } catch (error) {
     console.error('Lỗi dịch sang tiếng Việt:', error.message);
-    return { 
-      banDich: text, 
-      ngonNguGoc: 'unknown', 
-      daDich: false 
-    };
+    return { banDich: text, ngonNguGoc: 'unknown', daDich: false };
   }
 }
 
-// Hàm dịch sang tiếng Anh
+// Hàm dịch sang tiếng Anh (Self-hosted LibreTranslate)
 async function dichSangTiengAnh(text) {
-  if (!text || text.trim() === '') {
-    return text;
-  }
+  if (!text || text.trim() === '') return text;
   
   try {
-    const result = await translate(text, { to: 'en' });
-    return result;
+    // Kiểm tra cache
+    const cached = getFromCache(text, 'en');
+    if (cached) return cached;
+    
+    const translateUrl = process.env.LIBRETRANSLATE_URL || 'https://libretranslate.com';
+    
+    const response = await axios.post(`${translateUrl}/translate`, {
+      q: text,
+      source: 'auto',
+      target: 'en',
+      format: 'text'
+    }, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 15000
+    });
+    
+    if (response.data && response.data.translatedText) {
+      const translatedText = response.data.translatedText;
+      
+      // Lưu vào cache
+      saveToCache(text, 'en', translatedText);
+      
+      return translatedText;
+    }
+    
+    throw new Error('Translation response invalid');
+    
   } catch (error) {
     console.error('Lỗi dịch sang tiếng Anh:', error.message);
-    return text; // Fallback: Trả về text gốc
+    return text;
   }
 }
+
+
+
 
 // Hàm lấy thông tin khách hàng từ Facebook
 async function layThongTinKhachTuFB(pageId, senderId, pageToken) {
@@ -1513,6 +1580,45 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
     connectedClients: connectedClients.size
   });
+});
+// API: Dịch text
+app.post('/api/translate', async (req, res) => {
+  try {
+    const { text, to = 'en' } = req.body;
+    
+    if (!text) {
+      return res.status(400).json({
+        success: false,
+        error: 'Text is required'
+      });
+    }
+    
+    let translated;
+    if (to === 'en') {
+      translated = await dichSangTiengAnh(text);
+    } else if (to === 'vi') {
+      const result = await dichSangTiengViet(text);
+      translated = result.banDich;
+    } else {
+      throw new Error('Unsupported language');
+    }
+    
+    res.json({
+      success: true,
+      data: {
+        original: text,
+        translated: translated,
+        language: to
+      }
+    });
+    
+  } catch (error) {
+    console.error('API Error - translate:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
 });
 
 server.listen(PORT, () => {
