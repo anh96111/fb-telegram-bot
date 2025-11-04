@@ -1851,6 +1851,127 @@ app.post('/api/conversations/:customerId/send-media', upload.single('file'), asy
     });
   }
 });
+// ==================== QUICK REPLIES MANAGEMENT APIs ====================
+
+// API: Cập nhật quick reply
+app.put('/api/quickreplies/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { key, emoji, text_vi, text_en } = req.body;
+    
+    if (!key || !text_vi || !text_en) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields'
+      });
+    }
+    
+    const result = await pool.query(`
+      UPDATE quick_replies 
+      SET key = $1, emoji = $2, text_vi = $3, text_en = $4
+      WHERE id = $5
+      RETURNING *
+    `, [key, emoji || '💬', text_vi, text_en, id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Quick reply not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: result.rows[0]
+    });
+    
+  } catch (error) {
+    console.error('API Error - update quick reply:', error);
+    
+    if (error.code === '23505') {
+      return res.status(400).json({
+        success: false,
+        error: 'Key already exists'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// API: Xóa quick reply
+app.delete('/api/quickreplies/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const result = await pool.query(
+      'DELETE FROM quick_replies WHERE id = $1 RETURNING *',
+      [id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Quick reply not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: result.rows[0]
+    });
+    
+  } catch (error) {
+    console.error('API Error - delete quick reply:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// API: Tạo quick reply mới
+app.post('/api/quickreplies', async (req, res) => {
+  try {
+    const { key, emoji, text_vi, text_en } = req.body;
+    
+    if (!key || !text_vi || !text_en) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields'
+      });
+    }
+    
+    const result = await pool.query(`
+      INSERT INTO quick_replies (key, emoji, text_vi, text_en, created_at)
+      VALUES ($1, $2, $3, $4, NOW())
+      RETURNING *
+    `, [key, emoji || '💬', text_vi, text_en]);
+    
+    res.json({
+      success: true,
+      data: result.rows[0]
+    });
+    
+  } catch (error) {
+    console.error('API Error - create quick reply:', error);
+    
+    if (error.code === '23505') {
+      return res.status(400).json({
+        success: false,
+        error: 'Key already exists'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 server.listen(PORT, () => {
   console.log(`\n${'='.repeat(50)}`);
