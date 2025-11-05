@@ -172,7 +172,11 @@ for (let i = 1; i <= 10; i++) {
 
 console.log(`✓ Đã cấu hình ${pages.length} fanpage`);
 
-// Hàm dịch sang tiếng Việt (Self-hosted LibreTranslate)
+// ============= OPENAI GPT-4O-MINI TRANSLATOR =============
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_MODEL = 'gpt-4o-mini';
+
+// Hàm dịch sang tiếng Việt (GPT-4o-mini)
 async function dichSangTiengViet(text) {
   if (!text || text.trim() === '') {
     return { banDich: text, ngonNguGoc: 'unknown', daDich: false };
@@ -194,41 +198,83 @@ async function dichSangTiengViet(text) {
       };
     }
     
-    const translateUrl = process.env.LIBRETRANSLATE_URL || 'https://libretranslate.com';
-    
-    const response = await axios.post(`${translateUrl}/translate`, {
-      q: text,
-      source: 'auto',
-      target: 'vi',
-      format: 'text'
-    }, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 15000
-    });
-    
-    if (response.data && response.data.translatedText) {
-      const translatedText = response.data.translatedText;
-      const detectedLang = response.data.detectedLanguage?.language || 'en';
+    // Nếu không có OpenAI key, dùng LibreTranslate
+    if (!OPENAI_API_KEY) {
+      console.log('⚠️ Không có OpenAI key, dùng LibreTranslate');
       
-      // Lưu vào cache
+      const translateUrl = process.env.LIBRETRANSLATE_URL || 'https://libretranslate.com';
+      const response = await axios.post(`${translateUrl}/translate`, {
+        q: text,
+        source: 'auto',
+        target: 'vi',
+        format: 'text'
+      }, {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 15000
+      });
+      
+      if (response.data && response.data.translatedText) {
+        const translatedText = response.data.translatedText;
+        saveToCache(text, 'vi', translatedText);
+        return {
+          banDich: translatedText,
+          ngonNguGoc: 'en',
+          daDich: true
+        };
+      }
+    }
+    
+    // Dùng GPT-4o-mini để dịch
+    console.log(`🤖 Dịch với GPT: "${text.substring(0, 30)}..."`);
+    
+    const response = await axios.post(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        model: OPENAI_MODEL,
+        messages: [
+          {
+            role: 'system',
+            content: 'Bạn là người dịch chuyên nghiệp. Dịch sang tiếng Việt tự nhiên, thân thiện. Giữ nguyên emoji và số. Chỉ trả về bản dịch, không giải thích.'
+          },
+          {
+            role: 'user',
+            content: text
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 500
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 15000
+      }
+    );
+    
+    if (response.data?.choices?.[0]?.message?.content) {
+      const translatedText = response.data.choices[0].message.content.trim();
+      
+      // Lưu cache
       saveToCache(text, 'vi', translatedText);
+      
+      console.log(`✅ Đã dịch: "${translatedText.substring(0, 30)}..."`);
       
       return {
         banDich: translatedText,
-        ngonNguGoc: detectedLang,
+        ngonNguGoc: 'en',
         daDich: true
       };
     }
     
-    throw new Error('Translation response invalid');
-    
   } catch (error) {
-    console.error('Lỗi dịch sang tiếng Việt:', error.message);
+    console.error('❌ Lỗi dịch:', error.message);
     return { banDich: text, ngonNguGoc: 'unknown', daDich: false };
   }
 }
 
-// Hàm dịch sang tiếng Anh (Self-hosted LibreTranslate)
+// Hàm dịch sang tiếng Anh (GPT-4o-mini)
 async function dichSangTiengAnh(text) {
   if (!text || text.trim() === '') return text;
   
@@ -237,34 +283,75 @@ async function dichSangTiengAnh(text) {
     const cached = getFromCache(text, 'en');
     if (cached) return cached;
     
-    const translateUrl = process.env.LIBRETRANSLATE_URL || 'https://libretranslate.com';
-    
-    const response = await axios.post(`${translateUrl}/translate`, {
-      q: text,
-      source: 'auto',
-      target: 'en',
-      format: 'text'
-    }, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 15000
-    });
-    
-    if (response.data && response.data.translatedText) {
-      const translatedText = response.data.translatedText;
+    // Nếu không có OpenAI key, dùng LibreTranslate
+    if (!OPENAI_API_KEY) {
+      console.log('⚠️ Không có OpenAI key, dùng LibreTranslate');
       
-      // Lưu vào cache
+      const translateUrl = process.env.LIBRETRANSLATE_URL || 'https://libretranslate.com';
+      const response = await axios.post(`${translateUrl}/translate`, {
+        q: text,
+        source: 'auto',
+        target: 'en',
+        format: 'text'
+      }, {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 15000
+      });
+      
+      if (response.data && response.data.translatedText) {
+        const translatedText = response.data.translatedText;
+        saveToCache(text, 'en', translatedText);
+        return translatedText;
+      }
+      return text;
+    }
+    
+    // Dùng GPT-4o-mini để dịch
+    console.log(`🤖 Dịch với GPT: "${text.substring(0, 30)}..."`);
+    
+    const response = await axios.post(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        model: OPENAI_MODEL,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a professional translator. Translate this Vietnamese text to natural English. Keep emojis and numbers. Return only the translation.'
+          },
+          {
+            role: 'user',
+            content: text
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 500
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 15000
+      }
+    );
+    
+    if (response.data?.choices?.[0]?.message?.content) {
+      const translatedText = response.data.choices[0].message.content.trim();
+      
+      // Lưu cache
       saveToCache(text, 'en', translatedText);
+      
+      console.log(`✅ Đã dịch: "${translatedText.substring(0, 30)}..."`);
       
       return translatedText;
     }
     
-    throw new Error('Translation response invalid');
-    
   } catch (error) {
-    console.error('Lỗi dịch sang tiếng Anh:', error.message);
+    console.error('❌ Lỗi dịch:', error.message);
     return text;
   }
 }
+
 
 
 
