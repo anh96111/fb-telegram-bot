@@ -1762,7 +1762,78 @@ app.post('/api/labels', async (req, res) => {
     });
   }
 });
+app.put('/api/labels/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, emoji, color } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        error: 'Label name is required'
+      });
+    }
+    
+    const result = await pool.query(
+      'UPDATE labels SET name = $1, emoji = $2, color = $3 WHERE id = $4 RETURNING *',
+      [name.toLowerCase(), emoji || '🏷️', color || '#999999', id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Label not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: result.rows[0]
+    });
+    
+  } catch (error) {
+    console.error('API Error - update label:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
+// THÊM API NÀY - Delete label
+app.delete('/api/labels/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Xóa customer_labels trước (foreign key)
+    await pool.query('DELETE FROM customer_labels WHERE label_id = $1', [id]);
+    
+    // Xóa label
+    const result = await pool.query(
+      'DELETE FROM labels WHERE id = $1 RETURNING *',
+      [id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Label not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: result.rows[0]
+    });
+    
+  } catch (error) {
+    console.error('API Error - delete label:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 // API: Lấy labels của một customer
 app.get('/api/customers/:customerId/labels', async (req, res) => {
   try {
