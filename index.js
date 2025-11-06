@@ -376,31 +376,31 @@ async function layThongTinKhachTuFB(pageId, senderId, pageToken) {
       if (participant && participant.name) {
         return {
           name: participant.name,
-          avatar: null
+          avatar: null  // Conversations API không trả về avatar
         };
       }
     }
     
-    // Cách 2: Fallback - Lấy từ PSID
+    // Cách 2: Lấy từ PSID (có thể lấy được avatar)
     try {
       const userResponse = await axios.get(
         `https://graph.facebook.com/v23.0/${senderId}`,
         {
           params: {
-            fields: 'name',
+            fields: 'name,profile_pic',  // ← THÊM profile_pic
             access_token: pageToken
           }
         }
       );
       
-      if (userResponse.data && userResponse.data.name) {
+      if (userResponse.data) {
         return {
-          name: userResponse.data.name,
-          avatar: null
+          name: userResponse.data.name || `Khách #${senderId.slice(-6)}`,
+          avatar: userResponse.data.profile_pic || null  // ← LẤY AVATAR
         };
       }
     } catch (e) {
-      console.log('Không thể lấy tên từ PSID');
+      console.log('Không thể lấy thông tin từ PSID:', e.message);
     }
     
     // Cách 3: Fallback cuối - Dùng ID
@@ -419,6 +419,7 @@ async function layThongTinKhachTuFB(pageId, senderId, pageToken) {
 }
 
 
+
 // Hàm lấy hoặc tạo khách hàng trong database
 async function layHoacTaoKhach(pageId, senderId, pageToken) {
   try {
@@ -426,25 +427,46 @@ async function layHoacTaoKhach(pageId, senderId, pageToken) {
     const result = await pool.query(query, [senderId, pageId]);
     
     if (result.rows.length > 0) {
-      return result.rows[0];
+      const existingCustomer = result.rows[0];
+      
+      // NẾU CHƯA CÓ AVATAR, THỬ LẤY LẠI
+      if (!existingCustomer.avatar) {
+        const fbInfo = await layThongTinKhachTuFB(pageId, senderId, pageToken);
+        
+        if (fbInfo.avatar) {
+          // Update avatar nếu lấy được
+          await pool.query(
+            'UPDATE customers SET avatar = $1 WHERE id = $2',
+            [fbInfo.avatar, existingCustomer.id]
+          );
+          existingCustomer.avatar = fbInfo.avatar;
+          console.log(`✅ Updated avatar for ${existingCustomer.name}`);
+        }
+      }
+      
+      return existingCustomer;
     }
     
     // Lấy thông tin từ Facebook
     const fbInfo = await layThongTinKhachTuFB(pageId, senderId, pageToken);
     
-    // Tạo mới trong database
+    // Tạo mới trong database (có cả avatar)
     const insertQuery = `
       INSERT INTO customers (fb_id, page_id, name, avatar, created_at) 
       VALUES ($1, $2, $3, $4, NOW()) 
       RETURNING *
     `;
     const newCustomer = await pool.query(insertQuery, [senderId, pageId, fbInfo.name, fbInfo.avatar]);
+    
+    console.log(`✅ Created customer ${fbInfo.name} with avatar: ${fbInfo.avatar ? 'Yes' : 'No'}`);
+    
     return newCustomer.rows[0];
   } catch (error) {
     console.error('Lỗi lấy/tạo khách:', error.message);
     return { id: null, fb_id: senderId, name: 'Unknown', avatar: null };
   }
 }
+
 
 // Hàm lấy nhãn của khách hàng
 async function layNhanKhach(customerId) {
@@ -595,6 +617,7 @@ const cacNut = taoNutAction(khach.id, page.id, senderId, ketQuaDich.ngonNguGoc);
     broadcastToWeb('new_message', {
       customerId: khach.id,
       customerName: khach.name,
+      customerAvatar: khach.avatar, 
       pageId: page.id,
       pageName: page.name,
       message: text,
