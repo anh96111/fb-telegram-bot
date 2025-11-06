@@ -316,7 +316,7 @@ async function dichSangTiengAnh(text) {
         messages: [
           {
             role: 'system',
-            content: 'You are a professional translator. Translate this Vietnamese text to natural English. Keep emojis and numbers. Return only the translation.'
+            content: 'You are a professional Vietnamese-English translator. Translate the Vietnamese text to English accurately. Important: "xin chào" = "hello", "cảm ơn" = "thank you". Keep original meaning. Preserve emojis, numbers, special characters. Return ONLY the translation, no explanations.'
           },
           {
             role: 'user',
@@ -598,7 +598,8 @@ const cacNut = taoNutAction(khach.id, page.id, senderId, ketQuaDich.ngonNguGoc);
       pageId: page.id,
       pageName: page.name,
       message: text,
-      translated: ketQuaDich.daDich ? ketQuaDich.banDich : null,
+      translatedText: ketQuaDich.daDich ? ketQuaDich.banDich : null,
+senderType: 'customer',
       language: ketQuaDich.ngonNguGoc,
       labels: cacNhan,
       timestamp: new Date().toISOString()
@@ -757,6 +758,8 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
     console.log(`✓ Đã chuyển ${attachments.length} media từ ${page.name} - ${khach.name} lên Telegram`);
     // Broadcast đến web
     broadcastToWeb('new_message', {
+      translatedText: null,
+      senderType: 'customer', 
       customerId: khach.id,
       customerName: khach.name,
       pageId: page.id,
