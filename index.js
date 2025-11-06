@@ -1768,6 +1768,7 @@ app.get('/api/quickreplies', async (req, res) => {
 
 // API: Health check
 app.get('/api/health', (req, res) => {
+  
   res.json({
     success: true,
     status: 'ok',
@@ -1775,6 +1776,40 @@ app.get('/api/health', (req, res) => {
     connectedClients: connectedClients.size
   });
 });
+// API: Test Telegram connection
+app.get('/api/test-telegram', async (req, res) => {
+  try {
+    console.log('🔧 Testing Telegram connection...');
+    
+    // Test 1: Check bot exists
+    const botInfo = await bot.getMe();
+    console.log('✅ Bot OK:', botInfo.username);
+    
+    // Test 2: Get group ID
+    const groupId = process.env.TELEGRAM_GROUP_ID;
+    console.log('📍 Group ID:', groupId);
+    
+    // Test 3: Send message
+    const testMsg = '🔧 Test từ Dashboard: ' + new Date().toLocaleString('vi-VN');
+    
+    const result = await bot.sendMessage(groupId, testMsg);
+    
+    res.json({
+      success: true,
+      message: 'Test OK! Check Telegram group',
+      botName: botInfo.username,
+      groupId: groupId
+    });
+    
+  } catch (error) {
+    res.json({
+      success: false,
+      error: error.message,
+      groupId: process.env.TELEGRAM_GROUP_ID
+    });
+  }
+});
+
 // API: Dịch text
 app.post('/api/translate', async (req, res) => {
   try {
