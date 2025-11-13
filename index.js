@@ -3,6 +3,19 @@ const express = require('express');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
+// Store processed message IDs to prevent duplicates
+const processedMessages = new Map();
+const MESSAGE_CACHE_TIME = 60000; // 60 seconds
+
+// Clean old messages periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, timestamp] of processedMessages) {
+    if (now - timestamp > MESSAGE_CACHE_TIME) {
+      processedMessages.delete(key);
+    }
+  }
+}, 30000); // Clean every 30 seconds
 
 const app = express();
 app.get('/health', (req, res) => {
@@ -547,6 +560,8 @@ async function luuTinNhan(customerId, pageId, senderType, content, mediaType = n
 // Xử lý tin nhắn từ khách hàng
 async function xuLyTinNhanTuKhach(page, senderId, text, media = null) {
   try {
+
+    
     // Lấy thông tin khách
     const khach = await layHoacTaoKhach(page.id, senderId, page.token);
     const cacNhan = await layNhanKhach(khach.id);
@@ -779,18 +794,23 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
     }
     
     console.log(`✓ Đã chuyển ${attachments.length} media từ ${page.name} - ${khach.name} lên Telegram`);
-    // Broadcast đến web
+    
+    // Broadcast đến web với đầy đủ thông tin
     broadcastToWeb('new_message', {
-      translatedText: null,
-      senderType: 'customer', 
       customerId: khach.id,
       customerName: khach.name,
+      customerAvatar: khach.avatar,
       pageId: page.id,
       pageName: page.name,
+      content: caption || '',
       message: caption || 'Gửi media',
       mediaType: attachments[0]?.type,
+      mediaUrl: attachments[0]?.payload?.url,
+      senderType: 'customer',
+      translatedText: null,
       timestamp: new Date().toISOString()
     });
+
   } catch (error) {
     console.error('Lỗi xử lý media:', error);
   }
@@ -819,36 +839,58 @@ function taoNutAction(customerId, pageId, senderId, ngonNgu) {
 app.post('/facebook/webhook', async (req, res) => {
   const body = req.body;
   
-  if (body.object === 'page') {
-    for (const entry of body.entry) {
-      const pageId = entry.id;
-      const page = pages.find(p => p.id === pageId);
-      
-      if (!page) {
-        console.log(`Không tìm thấy cấu hình cho page ${pageId}`);
-        continue;
-      }
-      
-      for (const event of entry.messaging) {
-  if (event.message) {
-    // Xử lý text
+  // QUAN TRỌNG: Response ngay cho Facebook
+  res.status(200).send('OK');
+  
+  // Xử lý async sau khi đã response
+  setImmediate(async () => {
+    try {
+      if (body.object === 'page') {
+        for (const entry of body.entry) {
+          const pageId = entry.id;
+          const page = pages.find(p => p.id === pageId);
+          
+          if (!page) {
+            console.log(`Không tìm thấy cấu hình cho page ${pageId}`);
+            continue;
+          }
+          
+          for (const event of entry.messaging) {
+            if (event.message) {
+              // Check for duplicate
+    const messageKey = `${event.sender.id}_${event.message.mid || event.timestamp}`;
+    
+    if (processedMessages.has(messageKey)) {
+      console.log('⚠️ Duplicate message detected, skipping:', messageKey);
+      continue;
+    }
+    
+    // Mark as processed
+    processedMessages.set(messageKey, Date.now());
+    
+    // Process message
     if (event.message.text) {
       await xuLyTinNhanTuKhach(page, event.sender.id, event.message.text, null);
     }
-    
-    // Xử lý attachments (ảnh, video, file...)
-    if (event.message.attachments && event.message.attachments.length > 0) {
-      await xuLyMediaTuKhach(page, event.sender.id, event.message.attachments, event.message.text);
+              // Xử lý text
+              if (event.message.text) {
+                await xuLyTinNhanTuKhach(page, event.sender.id, event.message.text, null);
+              }
+              
+              // Xử lý attachments
+              if (event.message.attachments && event.message.attachments.length > 0) {
+                await xuLyMediaTuKhach(page, event.sender.id, event.message.attachments, event.message.text);
+              }
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error processing webhook:', error);
     }
-  }
-}
-
-    }
-    res.status(200).send('OK');
-  } else {
-    res.sendStatus(404);
-  }
+  });
 });
+
 
 // Xác thực webhook Facebook
 app.get('/facebook/webhook', (req, res) => {
