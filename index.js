@@ -856,32 +856,30 @@ app.post('/facebook/webhook', async (req, res) => {
           }
           
           for (const event of entry.messaging) {
-            if (event.message) {
+                        if (event.message) {
               // Check for duplicate
-    const messageKey = `${event.sender.id}_${event.message.mid || event.timestamp}`;
-    
-    if (processedMessages.has(messageKey)) {
-      console.log('⚠️ Duplicate message detected, skipping:', messageKey);
-      continue;
-    }
-    
-    // Mark as processed
-    processedMessages.set(messageKey, Date.now());
-    
-    // Process message
-    if (event.message.text) {
-      await xuLyTinNhanTuKhach(page, event.sender.id, event.message.text, null);
-    }
-              // Xử lý text
-              if (event.message.text) {
+              const messageKey = `${event.sender.id}_${event.message.mid || event.timestamp}`;
+              
+              if (processedMessages.has(messageKey)) {
+                console.log('⚠️ Duplicate message detected, skipping:', messageKey);
+                continue;
+              }
+              
+              // Mark as processed NGAY LẬP TỨC
+              processedMessages.set(messageKey, Date.now());
+              console.log('✓ Processing new message:', messageKey);
+              
+              // Xử lý text (nếu có)
+              if (event.message.text && !event.message.attachments) {
                 await xuLyTinNhanTuKhach(page, event.sender.id, event.message.text, null);
               }
               
-              // Xử lý attachments
+              // Xử lý attachments (nếu có)
               if (event.message.attachments && event.message.attachments.length > 0) {
                 await xuLyMediaTuKhach(page, event.sender.id, event.message.attachments, event.message.text);
               }
             }
+
           }
         }
       }
