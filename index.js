@@ -3,6 +3,7 @@ const express = require('express');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
+
 // Store processed message IDs to prevent duplicates
 const processedMessages = new Map();
 const MESSAGE_CACHE_TIME = 60000; // 60 seconds
@@ -39,6 +40,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json());
+
 // Khởi động server
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 console.log('🔧 PORT detected:', PORT);
@@ -98,10 +100,9 @@ const io = new Server(server, {
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization']
   },
-  transports: ['polling', 'websocket'], // Đảo thứ tự: polling trước
+  transports: ['polling', 'websocket'],
   allowEIO3: true
 });
-
 
 // Cấu hình upload
 const upload = multer({
@@ -149,7 +150,6 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-
 // Kết nối database
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -169,8 +169,6 @@ if (ENABLE_TELEGRAM_POLLING) {
   console.log('🤖 Telegram bot: Send-only mode (production)');
 }
 
-
-
 // Danh sách các fanpage
 const pages = [];
 for (let i = 1; i <= 10; i++) {
@@ -185,11 +183,9 @@ for (let i = 1; i <= 10; i++) {
 
 console.log(`✓ Đã cấu hình ${pages.length} fanpage`);
 
-// ============= OPENAI GPT-4O-MINI TRANSLATOR =============
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_MODEL = 'gpt-4o-mini';
+// ============= GEMINI TRANSLATOR =============
 
-// Hàm dịch sang tiếng Việt (GPT-4o-mini)
+// Hàm dịch sang tiếng Việt
 async function dichSangTiengViet(text) {
   if (!text || text.trim() === '') {
     return { banDich: text, ngonNguGoc: 'unknown', daDich: false };
@@ -211,9 +207,12 @@ async function dichSangTiengViet(text) {
       };
     }
     
-    // Nếu không có OpenAI key, dùng LibreTranslate
-    if (!OPENAI_API_KEY) {
-      console.log('⚠️ Không có OpenAI key, dùng LibreTranslate');
+    // Lấy Gemini config
+    const GEMINI_KEY = process.env.GEMINI_API_KEY;
+    const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    
+    if (!GEMINI_KEY) {
+      console.log('⚠️ Không có Gemini key, dùng LibreTranslate');
       
       const translateUrl = process.env.LIBRETRANSLATE_URL || 'https://libretranslate.com';
       const response = await axios.post(`${translateUrl}/translate`, {
@@ -237,39 +236,32 @@ async function dichSangTiengViet(text) {
       }
     }
     
-    // Dùng GPT-4o-mini để dịch
-    console.log(`🤖 Dịch với GPT: "${text.substring(0, 30)}..."`);
+    console.log(`🤖 Dịch với Gemini: "${text.substring(0, 30)}..."`);
     
     const response = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`,
       {
-        model: OPENAI_MODEL,
-        messages: [
-          {
-            role: 'system',
-            content: 'Bạn là người dịch chuyên nghiệp. Dịch sang tiếng Việt tự nhiên, thân thiện. Giữ nguyên emoji và số. Chỉ trả về bản dịch, không giải thích.'
-          },
-          {
-            role: 'user',
-            content: text
-          }
-        ],
-        temperature: 0.3,
-        max_tokens: 500
+        contents: [{
+          parts: [{
+            text: `Dịch sang tiếng Việt tự nhiên, thân thiện. Giữ nguyên emoji và số. Chỉ trả về bản dịch, không giải thích.\n\nText: ${text}`
+          }]
+        }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 500
+        }
       },
       {
         headers: {
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
           'Content-Type': 'application/json'
         },
         timeout: 15000
       }
     );
     
-    if (response.data?.choices?.[0]?.message?.content) {
-      const translatedText = response.data.choices[0].message.content.trim();
+    if (response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+      const translatedText = response.data.candidates[0].content.parts[0].text.trim();
       
-      // Lưu cache
       saveToCache(text, 'vi', translatedText);
       
       console.log(`✅ Đã dịch: "${translatedText.substring(0, 30)}..."`);
@@ -287,7 +279,7 @@ async function dichSangTiengViet(text) {
   }
 }
 
-// Hàm dịch sang tiếng Anh (GPT-4o-mini)
+// Hàm dịch sang tiếng Anh
 async function dichSangTiengAnh(text) {
   if (!text || text.trim() === '') return text;
   
@@ -296,9 +288,12 @@ async function dichSangTiengAnh(text) {
     const cached = getFromCache(text, 'en');
     if (cached) return cached;
     
-    // Nếu không có OpenAI key, dùng LibreTranslate
-    if (!OPENAI_API_KEY) {
-      console.log('⚠️ Không có OpenAI key, dùng LibreTranslate');
+    // Lấy Gemini config
+    const GEMINI_KEY = process.env.GEMINI_API_KEY;
+    const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    
+    if (!GEMINI_KEY) {
+      console.log('⚠️ Không có Gemini key, dùng LibreTranslate');
       
       const translateUrl = process.env.LIBRETRANSLATE_URL || 'https://libretranslate.com';
       const response = await axios.post(`${translateUrl}/translate`, {
@@ -319,39 +314,32 @@ async function dichSangTiengAnh(text) {
       return text;
     }
     
-    // Dùng GPT-4o-mini để dịch
-    console.log(`🤖 Dịch với GPT: "${text.substring(0, 30)}..."`);
+    console.log(`🤖 Dịch với Gemini: "${text.substring(0, 30)}..."`);
     
     const response = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`,
       {
-        model: OPENAI_MODEL,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a professional Vietnamese-English translator. Translate the Vietnamese text to English accurately. Important: "xin chào" = "hello", "cảm ơn" = "thank you". Keep original meaning. Preserve emojis, numbers, special characters. Return ONLY the translation, no explanations.'
-          },
-          {
-            role: 'user',
-            content: text
-          }
-        ],
-        temperature: 0.3,
-        max_tokens: 500
+        contents: [{
+          parts: [{
+            text: `Translate Vietnamese to English accurately. Important: "xin chào" = "hello", "cảm ơn" = "thank you". Keep emojis and numbers. Return ONLY the translation.\n\nVietnamese text: ${text}`
+          }]
+        }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 500
+        }
       },
       {
         headers: {
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
           'Content-Type': 'application/json'
         },
         timeout: 15000
       }
     );
     
-    if (response.data?.choices?.[0]?.message?.content) {
-      const translatedText = response.data.choices[0].message.content.trim();
+    if (response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+      const translatedText = response.data.candidates[0].content.parts[0].text.trim();
       
-      // Lưu cache
       saveToCache(text, 'en', translatedText);
       
       console.log(`✅ Đã dịch: "${translatedText.substring(0, 30)}..."`);
@@ -365,14 +353,9 @@ async function dichSangTiengAnh(text) {
   }
 }
 
-
-
-
-
 // Hàm lấy thông tin khách hàng từ Facebook
 async function layThongTinKhachTuFB(pageId, senderId, pageToken) {
   try {
-    // Cách 1: Lấy từ conversation (không cần quyền đặc biệt)
     const response = await axios.get(
       `https://graph.facebook.com/v23.0/${pageId}/conversations`,
       {
@@ -389,18 +372,17 @@ async function layThongTinKhachTuFB(pageId, senderId, pageToken) {
       if (participant && participant.name) {
         return {
           name: participant.name,
-          avatar: null  // Conversations API không trả về avatar
+          avatar: null
         };
       }
     }
     
-    // Cách 2: Lấy từ PSID (có thể lấy được avatar)
     try {
       const userResponse = await axios.get(
         `https://graph.facebook.com/v23.0/${senderId}`,
         {
           params: {
-            fields: 'name,profile_pic',  // ← THÊM profile_pic
+            fields: 'name,profile_pic',
             access_token: pageToken
           }
         }
@@ -409,14 +391,13 @@ async function layThongTinKhachTuFB(pageId, senderId, pageToken) {
       if (userResponse.data) {
         return {
           name: userResponse.data.name || `Khách #${senderId.slice(-6)}`,
-          avatar: userResponse.data.profile_pic || null  // ← LẤY AVATAR
+          avatar: userResponse.data.profile_pic || null
         };
       }
     } catch (e) {
       console.log('Không thể lấy thông tin từ PSID:', e.message);
     }
     
-    // Cách 3: Fallback cuối - Dùng ID
     return { 
       name: `Khách #${senderId.slice(-6)}`, 
       avatar: null 
@@ -431,8 +412,6 @@ async function layThongTinKhachTuFB(pageId, senderId, pageToken) {
   }
 }
 
-
-
 // Hàm lấy hoặc tạo khách hàng trong database
 async function layHoacTaoKhach(pageId, senderId, pageToken) {
   try {
@@ -442,12 +421,10 @@ async function layHoacTaoKhach(pageId, senderId, pageToken) {
     if (result.rows.length > 0) {
       const existingCustomer = result.rows[0];
       
-      // NẾU CHƯA CÓ AVATAR, THỬ LẤY LẠI
       if (!existingCustomer.avatar) {
         const fbInfo = await layThongTinKhachTuFB(pageId, senderId, pageToken);
         
         if (fbInfo.avatar) {
-          // Update avatar nếu lấy được
           await pool.query(
             'UPDATE customers SET avatar = $1 WHERE id = $2',
             [fbInfo.avatar, existingCustomer.id]
@@ -460,10 +437,8 @@ async function layHoacTaoKhach(pageId, senderId, pageToken) {
       return existingCustomer;
     }
     
-    // Lấy thông tin từ Facebook
     const fbInfo = await layThongTinKhachTuFB(pageId, senderId, pageToken);
     
-    // Tạo mới trong database (có cả avatar)
     const insertQuery = `
       INSERT INTO customers (fb_id, page_id, name, avatar, created_at) 
       VALUES ($1, $2, $3, $4, NOW()) 
@@ -479,7 +454,6 @@ async function layHoacTaoKhach(pageId, senderId, pageToken) {
     return { id: null, fb_id: senderId, name: 'Unknown', avatar: null };
   }
 }
-
 
 // Hàm lấy nhãn của khách hàng
 async function layNhanKhach(customerId) {
@@ -545,6 +519,7 @@ async function luuMapping(telegramMsgId, pageId, senderId, customerId, ngonNgu) 
     console.error('Lỗi lưu mapping:', error.message);
   }
 }
+
 // Hàm lưu tin nhắn vào database
 async function luuTinNhan(customerId, pageId, senderType, content, mediaType = null, mediaUrl = null, translatedText = null) {
   try {
@@ -560,24 +535,17 @@ async function luuTinNhan(customerId, pageId, senderType, content, mediaType = n
 // Xử lý tin nhắn từ khách hàng
 async function xuLyTinNhanTuKhach(page, senderId, text, media = null) {
   try {
-
-    
-    // Lấy thông tin khách
     const khach = await layHoacTaoKhach(page.id, senderId, page.token);
     const cacNhan = await layNhanKhach(khach.id);
     
-    // Dịch tin nhắn sang tiếng Việt
     const ketQuaDich = await dichSangTiengViet(text);
     
-    // Tạo chuỗi nhãn
     const chuoiNhan = cacNhan.length > 0 
-  ? cacNhan.map(n => `${n.emoji || '🏷️'}<code>${n.name}</code>`).join(' ')
-  : '';
+      ? cacNhan.map(n => `${n.emoji || '🏷️'}<code>${n.name}</code>`).join(' ')
+      : '';
     
-    // Kiểm tra thread cũ (48h)
     const threadCu = await layThreadCu(khach.id, page.id);
     
-    // Format tin nhắn
     let noiDung = `<b>━━━━━━━━━━━━━━━━━━━━</b>
 <b>🏪 ${page.name}</b>
 ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
@@ -603,10 +571,8 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
     
     noiDung += `\n<b>━━━━━━━━━━━━━━━━━━━━</b>`;
     
-    // Tạo các nút
-const cacNut = taoNutAction(khach.id, page.id, senderId, ketQuaDich.ngonNguGoc);
+    const cacNut = taoNutAction(khach.id, page.id, senderId, ketQuaDich.ngonNguGoc);
     
-    // Gửi lên Telegram (reply vào thread cũ nếu có)
     let msg;
     if (threadCu) {
       msg = await bot.sendMessage(process.env.TELEGRAM_GROUP_ID, noiDung, {
@@ -619,16 +585,12 @@ const cacNut = taoNutAction(khach.id, page.id, senderId, ketQuaDich.ngonNguGoc);
         reply_markup: cacNut,
         parse_mode: 'HTML'
       });
-      // Lưu thread mới
       await luuThreadMoi(khach.id, page.id, msg.message_id);
     }
     
-    // Lưu mapping
     await luuMapping(msg.message_id, page.id, senderId, khach.id, ketQuaDich.ngonNguGoc);
-    // Lưu tin nhắn vào database
     await luuTinNhan(khach.id, page.id, 'customer', text, null, null, ketQuaDich.daDich ? ketQuaDich.banDich : null);
-    console.log(`✓ Đã chuyển tin nhắn từ ${page.name} - ${khach.name} lên Telegram`);
-    // Broadcast đến web
+    
     broadcastToWeb('new_message', {
       customerId: khach.id,
       customerName: khach.name,
@@ -637,7 +599,7 @@ const cacNut = taoNutAction(khach.id, page.id, senderId, ketQuaDich.ngonNguGoc);
       pageName: page.name,
       message: text,
       translatedText: ketQuaDich.daDich ? ketQuaDich.banDich : null,
-senderType: 'customer',
+      senderType: 'customer',
       language: ketQuaDich.ngonNguGoc,
       labels: cacNhan,
       timestamp: new Date().toISOString()
@@ -649,22 +611,19 @@ senderType: 'customer',
     console.error('Lỗi xử lý tin nhắn từ khách:', error);
   }
 }
+
 // Xử lý media từ khách hàng
 async function xuLyMediaTuKhach(page, senderId, attachments, caption = '') {
   try {
-    // Lấy thông tin khách
     const khach = await layHoacTaoKhach(page.id, senderId, page.token);
     const cacNhan = await layNhanKhach(khach.id);
     
-    // Tạo chuỗi nhãn
     const chuoiNhan = cacNhan.length > 0 
       ? cacNhan.map(n => `${n.emoji || '🏷️'}<code>${n.name}</code>`).join(' ')
       : '';
     
-    // Kiểm tra thread cũ
     const threadCu = await layThreadCu(khach.id, page.id);
     
-    // Header tin nhắn
     let noiDung = `<b>━━━━━━━━━━━━━━━━━━━━</b>
 <b>🏪 ${page.name}</b>
 ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
@@ -681,7 +640,6 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
 
     noiDung += `\n<b>━━━━━━━━━━━━━━━━━━━━</b>\n`;
     
-    // Xử lý từng attachment
     for (const attachment of attachments) {
       const type = attachment.type;
       const payload = attachment.payload;
@@ -787,7 +745,6 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
         await luuTinNhan(khach.id, page.id, 'customer', caption || '', 'audio', payload.url);
         
       } else {
-        // Loại khác - gửi dạng text với link
         noiDung += `📌 <b>${type}</b>: <a href="${payload.url}">Xem tại đây</a>\n`;
         await luuTinNhan(khach.id, page.id, 'customer', caption || '', type, payload.url);
       }
@@ -795,7 +752,6 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
     
     console.log(`✓ Đã chuyển ${attachments.length} media từ ${page.name} - ${khach.name} lên Telegram`);
     
-    // Broadcast đến web với đầy đủ thông tin
     broadcastToWeb('new_message', {
       customerId: khach.id,
       customerName: khach.name,
@@ -816,8 +772,7 @@ ${chuoiNhan ? `<b>Nhãn:</b> ${chuoiNhan}\n` : ''}
   }
 }
 
-
-// Hàm tạo nút action (tách riêng để tái sử dụng)
+// Hàm tạo nút action
 function taoNutAction(customerId, pageId, senderId, ngonNgu) {
   return {
     inline_keyboard: [
@@ -835,14 +790,12 @@ function taoNutAction(customerId, pageId, senderId, ngonNgu) {
   };
 }
 
-// Webhook Facebook - Nhận tin nhắn từ khách
+// Webhook Facebook
 app.post('/facebook/webhook', async (req, res) => {
   const body = req.body;
   
-  // QUAN TRỌNG: Response ngay cho Facebook
   res.status(200).send('OK');
   
-  // Xử lý async sau khi đã response
   setImmediate(async () => {
     try {
       if (body.object === 'page') {
@@ -856,8 +809,7 @@ app.post('/facebook/webhook', async (req, res) => {
           }
           
           for (const event of entry.messaging) {
-                        if (event.message) {
-              // Check for duplicate
+            if (event.message) {
               const messageKey = `${event.sender.id}_${event.message.mid || event.timestamp}`;
               
               if (processedMessages.has(messageKey)) {
@@ -865,21 +817,17 @@ app.post('/facebook/webhook', async (req, res) => {
                 continue;
               }
               
-              // Mark as processed NGAY LẬP TỨC
               processedMessages.set(messageKey, Date.now());
               console.log('✓ Processing new message:', messageKey);
               
-              // Xử lý text (nếu có)
               if (event.message.text && !event.message.attachments) {
                 await xuLyTinNhanTuKhach(page, event.sender.id, event.message.text, null);
               }
               
-              // Xử lý attachments (nếu có)
               if (event.message.attachments && event.message.attachments.length > 0) {
                 await xuLyMediaTuKhach(page, event.sender.id, event.message.attachments, event.message.text);
               }
             }
-
           }
         }
       }
@@ -889,8 +837,6 @@ app.post('/facebook/webhook', async (req, res) => {
   });
 });
 
-
-// Xác thực webhook Facebook
 app.get('/facebook/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -904,66 +850,53 @@ app.get('/facebook/webhook', (req, res) => {
   }
 });
 
-// Xử lý khi admin reply trong Telegram
+// Telegram bot handlers
 if (ENABLE_TELEGRAM_POLLING) {
-bot.on('message', async (msg) => {
-  // Bỏ qua tin không phải từ group
-  if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
-  
-  // Bỏ qua tin không phải reply
-  if (!msg.reply_to_message) return;
-  
-  // Bỏ qua tin từ bot
-  if (msg.from.is_bot) return;
-
-  // Bỏ qua các lệnh bot (bắt đầu bằng /)
-  if (msg.text && msg.text.startsWith('/')) return;
-
-  
-  try {
-    console.log('📩 Nhận reply từ admin:', msg.text);
+  bot.on('message', async (msg) => {
+    if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
+    if (!msg.reply_to_message) return;
+    if (msg.from.is_bot) return;
+    if (msg.text && msg.text.startsWith('/')) return;
     
-    // Lấy mapping
-    const query = 'SELECT * FROM conversation_mappings WHERE telegram_message_id = $1';
-    const result = await pool.query(query, [msg.reply_to_message.message_id]);
-    
-    if (result.rows.length === 0) {
-      await bot.sendMessage(msg.chat.id, '❌ Không tìm thấy thông tin khách hàng để trả lời', {
-        reply_to_message_id: msg.message_id
-      });
-      return;
-    }
-    
-    const mapping = result.rows[0];
-    const page = pages.find(p => p.id === mapping.page_id);
-    
-    if (!page) {
-      await bot.sendMessage(msg.chat.id, '❌ Không tìm thấy cấu hình fanpage', {
-        reply_to_message_id: msg.message_id
-      });
-      return;
-    }
-    
-    console.log('🔄 Đang dịch tin nhắn...');
-    
-    // Dịch sang tiếng Anh
-    const tinNhanDaDich = await dichSangTiengAnh(msg.text);
-    
-    console.log('✓ Đã dịch:', tinNhanDaDich);
-    
-    // Tạo ID xác nhận
-    const confirmId = `${Date.now()}_${mapping.fb_sender_id}_${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Lưu vào pending
-    await pool.query(`
-      INSERT INTO pending_messages (confirm_id, page_id, fb_sender_id, original_text, translated_text, created_at)
-      VALUES ($1, $2, $3, $4, $5, NOW())
-    `, [confirmId, mapping.page_id, mapping.fb_sender_id, msg.text, tinNhanDaDich]);
-    
-    console.log('✓ Đã lưu pending message:', confirmId);
-    
-    // Hiển thị xác nhận
-    const xacNhanMessage = `
+    try {
+      console.log('📩 Nhận reply từ admin:', msg.text);
+      
+      const query = 'SELECT * FROM conversation_mappings WHERE telegram_message_id = $1';
+      const result = await pool.query(query, [msg.reply_to_message.message_id]);
+      
+      if (result.rows.length === 0) {
+        await bot.sendMessage(msg.chat.id, '❌ Không tìm thấy thông tin khách hàng để trả lời', {
+          reply_to_message_id: msg.message_id
+        });
+        return;
+      }
+      
+      const mapping = result.rows[0];
+      const page = pages.find(p => p.id === mapping.page_id);
+      
+      if (!page) {
+        await bot.sendMessage(msg.chat.id, '❌ Không tìm thấy cấu hình fanpage', {
+          reply_to_message_id: msg.message_id
+        });
+        return;
+      }
+      
+      console.log('🔄 Đang dịch tin nhắn...');
+      
+      const tinNhanDaDich = await dichSangTiengAnh(msg.text);
+      
+      console.log('✓ Đã dịch:', tinNhanDaDich);
+      
+      const confirmId = `${Date.now()}_${mapping.fb_sender_id}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      await pool.query(`
+        INSERT INTO pending_messages (confirm_id, page_id, fb_sender_id, original_text, translated_text, created_at)
+        VALUES ($1, $2, $3, $4, $5, NOW())
+      `, [confirmId, mapping.page_id, mapping.fb_sender_id, msg.text, tinNhanDaDich]);
+      
+      console.log('✓ Đã lưu pending message:', confirmId);
+      
+      const xacNhanMessage = `
 📝 <b>Xác nhận bản dịch:</b>
 
 🇻🇳 <b>Tin gốc:</b>
@@ -973,574 +906,537 @@ bot.on('message', async (msg) => {
 <code>${tinNhanDaDich}</code>
 
 Bạn muốn gửi tin này không?
-    `;
-    
-    await bot.sendMessage(msg.chat.id, xacNhanMessage, {
-      reply_to_message_id: msg.message_id,
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '✅ Gửi luôn', callback_data: `send_${confirmId}` },
-            { text: '❌ Hủy', callback_data: `cancel_${confirmId}` }
+      `;
+      
+      await bot.sendMessage(msg.chat.id, xacNhanMessage, {
+        reply_to_message_id: msg.message_id,
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '✅ Gửi luôn', callback_data: `send_${confirmId}` },
+              { text: '❌ Hủy', callback_data: `cancel_${confirmId}` }
+            ]
           ]
-        ]
-      }
-    });
-    
-    console.log('✓ Đã gửi tin xác nhận');
-    
-  } catch (error) {
-    console.error('❌ Lỗi xử lý reply:', error);
-    await bot.sendMessage(msg.chat.id, `❌ Lỗi: ${error.message}`, {
-      reply_to_message_id: msg.message_id
-    });
-  }
-});
-}
-// Xử lý callback query
-if (ENABLE_TELEGRAM_POLLING) {
-bot.on('callback_query', async (query) => {
-  try {
-    const data = query.data;
-    console.log('🔘 Nhận callback:', data);
-    
-    const parts = data.split('_');
-    const action = parts[0];
-    const id = parts.slice(1).join('_'); // Lấy phần còn lại làm ID
-    
-    if (action === 'send') {
-      console.log('📤 Đang gửi tin nhắn...');
-      
-      // Lấy pending message
-      const result = await pool.query('SELECT * FROM pending_messages WHERE confirm_id = $1', [id]);
-      
-      if (result.rows.length === 0) {
-        await bot.answerCallbackQuery(query.id, { text: '❌ Tin nhắn đã hết hạn' });
-        return;
-      }
-      
-      const pending = result.rows[0];
-      const page = pages.find(p => p.id === pending.page_id);
-      
-      if (!page) {
-        await bot.answerCallbackQuery(query.id, { text: '❌ Không tìm thấy fanpage' });
-        return;
-      }
-      
-      console.log('📮 Gửi đến Facebook:', pending.fb_sender_id);
-      
-      // Gửi về Facebook
-      const response = await axios.post(
-        `https://graph.facebook.com/v23.0/me/messages`,
-        {
-          recipient: { id: pending.fb_sender_id },
-          message: { text: pending.translated_text },
-          messaging_type: 'RESPONSE'
-        },
-        {
-          params: { access_token: page.token }
         }
-      );
+      });
       
-      console.log('✓ Facebook response:', response.data);
+      console.log('✓ Đã gửi tin xác nhận');
       
-      if (response.data.message_id) {
-        // Xóa pending
-        await pool.query('DELETE FROM pending_messages WHERE confirm_id = $1', [id]);
-        // Lưu tin nhắn vào database
-      const customerResult = await pool.query(
-        'SELECT id FROM customers WHERE fb_id = $1 AND page_id = $2',
-        [pending.fb_sender_id, pending.page_id]
-      );
-      if (customerResult.rows.length > 0) {
-        await luuTinNhan(customerResult.rows[0].id, pending.page_id, 'admin', pending.translated_text);
-      }
+    } catch (error) {
+      console.error('❌ Lỗi xử lý reply:', error);
+      await bot.sendMessage(msg.chat.id, `❌ Lỗi: ${error.message}`, {
+        reply_to_message_id: msg.message_id
+      });
+    }
+  });
 
-        // Cập nhật message
-        await bot.editMessageText(
-          `✅ <b>Đã gửi thành công!</b>\n\n🇬🇧 <code>${pending.translated_text}</code>`,
+  bot.on('callback_query', async (query) => {
+    try {
+      const data = query.data;
+      console.log('🔘 Nhận callback:', data);
+      
+      const parts = data.split('_');
+      const action = parts[0];
+      const id = parts.slice(1).join('_');
+      
+      if (action === 'send') {
+        console.log('📤 Đang gửi tin nhắn...');
+        
+        const result = await pool.query('SELECT * FROM pending_messages WHERE confirm_id = $1', [id]);
+        
+        if (result.rows.length === 0) {
+          await bot.answerCallbackQuery(query.id, { text: '❌ Tin nhắn đã hết hạn' });
+          return;
+        }
+        
+        const pending = result.rows[0];
+        const page = pages.find(p => p.id === pending.page_id);
+        
+        if (!page) {
+          await bot.answerCallbackQuery(query.id, { text: '❌ Không tìm thấy fanpage' });
+          return;
+        }
+        
+        console.log('📮 Gửi đến Facebook:', pending.fb_sender_id);
+        
+        const response = await axios.post(
+          `https://graph.facebook.com/v23.0/me/messages`,
           {
-            chat_id: query.message.chat.id,
-            message_id: query.message.message_id,
-            parse_mode: 'HTML'
+            recipient: { id: pending.fb_sender_id },
+            message: { text: pending.translated_text },
+            messaging_type: 'RESPONSE'
+          },
+          {
+            params: { access_token: page.token }
           }
         );
         
-        await bot.answerCallbackQuery(query.id, { text: '✅ Đã gửi!' });
-        console.log('✓ Hoàn thành gửi tin');
-      }
-      
-    } else if (action === 'cancel') {
-      await pool.query('DELETE FROM pending_messages WHERE confirm_id = $1', [id]);
-      await bot.editMessageText('❌ Đã hủy gửi tin nhắn', {
-        chat_id: query.message.chat.id,
-        message_id: query.message.message_id
-      });
-      await bot.answerCallbackQuery(query.id, { text: 'Đã hủy' });
-    } else if (action === 'quickreply') {
-  // Hiển thị menu quick replies
-  const customerId = parts[1];
-  const pageId = parts[2];
-  const senderId = parts[3];
-  const ngonNgu = parts[4] || 'en';
-  
-  try {
-    // Lấy danh sách quick replies
-    const qrResult = await pool.query('SELECT * FROM quick_replies ORDER BY key');
-    
-    if (qrResult.rows.length === 0) {
-      await bot.answerCallbackQuery(query.id, { text: '❌ Chưa có câu trả lời nhanh nào' });
-      return;
-    }
-    
-    // Tạo keyboard với các quick replies
-    const keyboard = [];
-    let row = [];
-    
-    for (let i = 0; i < qrResult.rows.length; i++) {
-      const qr = qrResult.rows[i];
-      row.push({
-        text: `${qr.emoji || '💬'} ${qr.key}`,
-        callback_data: `sendqr_${qr.id}_${pageId}_${senderId}_${ngonNgu}`
-      });
-      
-      // 2 nút mỗi hàng
-      if (row.length === 2 || i === qrResult.rows.length - 1) {
-        keyboard.push(row);
-        row = [];
-      }
-    }
-    
-    // Thêm nút đóng
-    keyboard.push([{ text: '❌ Đóng', callback_data: 'close' }]);
-    
-    await bot.sendMessage(query.message.chat.id, 
-      '⚡ <b>Chọn câu trả lời nhanh:</b>', 
-      {
-        reply_to_message_id: query.message.message_id,
-        parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: keyboard }
-      }
-    );
-    
-    await bot.answerCallbackQuery(query.id);
-    
-  } catch (error) {
-    console.error('Lỗi hiển thị quick replies:', error);
-    await bot.answerCallbackQuery(query.id, { text: '❌ Có lỗi xảy ra' });
-  }
-  
-} else if (action === 'sendqr') {
-  // Gửi quick reply
-  const qrId = parts[1];
-  const pageId = parts[2];
-  const senderId = parts[3];
-  const ngonNgu = parts[4] || 'en';
-  
-  try {
-    // Lấy quick reply
-    const qrResult = await pool.query('SELECT * FROM quick_replies WHERE id = $1', [qrId]);
-    
-    if (qrResult.rows.length === 0) {
-      await bot.answerCallbackQuery(query.id, { text: '❌ Không tìm thấy câu trả lời' });
-      return;
-    }
-    
-    const qr = qrResult.rows[0];
-    const page = pages.find(p => p.id === pageId);
-    
-    if (!page) {
-      await bot.answerCallbackQuery(query.id, { text: '❌ Không tìm thấy fanpage' });
-      return;
-    }
-    
-    // Chọn ngôn ngữ phù hợp
-    const tinNhan = ngonNgu === 'vi' ? qr.text_vi : qr.text_en;
-    
-    console.log(`📤 Gửi quick reply "${qr.key}" (${ngonNgu}):`, tinNhan);
-    
-    // Gửi về Facebook
-    const response = await axios.post(
-      `https://graph.facebook.com/v23.0/me/messages`,
-      {
-        recipient: { id: senderId },
-        message: { text: tinNhan },
-        messaging_type: 'RESPONSE'
-      },
-      {
-        params: { access_token: page.token }
-      }
-    );
-    
-    if (response.data.message_id) {
-      await bot.answerCallbackQuery(query.id, { text: `✅ Đã gửi: ${qr.emoji} ${qr.key}` });
-      
-      // Thông báo trong chat
-      await bot.sendMessage(query.message.chat.id, 
-        `✅ Đã gửi quick reply: ${qr.emoji}<code>${qr.key}</code>\n\n💬 "${tinNhan}"`,
-        {
-          reply_to_message_id: query.message.message_id,
-          parse_mode: 'HTML'
+        console.log('✓ Facebook response:', response.data);
+        
+        if (response.data.message_id) {
+          await pool.query('DELETE FROM pending_messages WHERE confirm_id = $1', [id]);
+          
+          const customerResult = await pool.query(
+            'SELECT id FROM customers WHERE fb_id = $1 AND page_id = $2',
+            [pending.fb_sender_id, pending.page_id]
+          );
+          if (customerResult.rows.length > 0) {
+            await luuTinNhan(customerResult.rows[0].id, pending.page_id, 'admin', pending.translated_text);
+          }
+
+          await bot.editMessageText(
+            `✅ <b>Đã gửi thành công!</b>\n\n🇬🇧 <code>${pending.translated_text}</code>`,
+            {
+              chat_id: query.message.chat.id,
+              message_id: query.message.message_id,
+              parse_mode: 'HTML'
+            }
+          );
+          
+          await bot.answerCallbackQuery(query.id, { text: '✅ Đã gửi!' });
+          console.log('✓ Hoàn thành gửi tin');
         }
-      );
+        
+      } else if (action === 'cancel') {
+        await pool.query('DELETE FROM pending_messages WHERE confirm_id = $1', [id]);
+        await bot.editMessageText('❌ Đã hủy gửi tin nhắn', {
+          chat_id: query.message.chat.id,
+          message_id: query.message.message_id
+        });
+        await bot.answerCallbackQuery(query.id, { text: 'Đã hủy' });
+      } else if (action === 'quickreply') {
+        const customerId = parts[1];
+        const pageId = parts[2];
+        const senderId = parts[3];
+        const ngonNgu = parts[4] || 'en';
+        
+        try {
+          const qrResult = await pool.query('SELECT * FROM quick_replies ORDER BY key');
+          
+          if (qrResult.rows.length === 0) {
+            await bot.answerCallbackQuery(query.id, { text: '❌ Chưa có câu trả lời nhanh nào' });
+            return;
+          }
+          
+          const keyboard = [];
+          let row = [];
+          
+          for (let i = 0; i < qrResult.rows.length; i++) {
+            const qr = qrResult.rows[i];
+            row.push({
+              text: `${qr.emoji || '💬'} ${qr.key}`,
+              callback_data: `sendqr_${qr.id}_${pageId}_${senderId}_${ngonNgu}`
+            });
+            
+            if (row.length === 2 || i === qrResult.rows.length - 1) {
+              keyboard.push(row);
+              row = [];
+            }
+          }
+          
+          keyboard.push([{ text: '❌ Đóng', callback_data: 'close' }]);
+          
+          await bot.sendMessage(query.message.chat.id, 
+            '⚡ <b>Chọn câu trả lời nhanh:</b>', 
+            {
+              reply_to_message_id: query.message.message_id,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: keyboard }
+            }
+          );
+          
+          await bot.answerCallbackQuery(query.id);
+          
+        } catch (error) {
+          console.error('Lỗi hiển thị quick replies:', error);
+          await bot.answerCallbackQuery(query.id, { text: '❌ Có lỗi xảy ra' });
+        }
+        
+      } else if (action === 'sendqr') {
+        const qrId = parts[1];
+        const pageId = parts[2];
+        const senderId = parts[3];
+        const ngonNgu = parts[4] || 'en';
+        
+        try {
+          const qrResult = await pool.query('SELECT * FROM quick_replies WHERE id = $1', [qrId]);
+          
+          if (qrResult.rows.length === 0) {
+            await bot.answerCallbackQuery(query.id, { text: '❌ Không tìm thấy câu trả lời' });
+            return;
+          }
+          
+          const qr = qrResult.rows[0];
+          const page = pages.find(p => p.id === pageId);
+          
+          if (!page) {
+            await bot.answerCallbackQuery(query.id, { text: '❌ Không tìm thấy fanpage' });
+            return;
+          }
+          
+          const tinNhan = ngonNgu === 'vi' ? qr.text_vi : qr.text_en;
+          
+          console.log(`📤 Gửi quick reply "${qr.key}" (${ngonNgu}):`, tinNhan);
+          
+          const response = await axios.post(
+            `https://graph.facebook.com/v23.0/me/messages`,
+            {
+              recipient: { id: senderId },
+              message: { text: tinNhan },
+              messaging_type: 'RESPONSE'
+            },
+            {
+              params: { access_token: page.token }
+            }
+          );
+          
+          if (response.data.message_id) {
+            await bot.answerCallbackQuery(query.id, { text: `✅ Đã gửi: ${qr.emoji} ${qr.key}` });
+            
+            await bot.sendMessage(query.message.chat.id, 
+              `✅ Đã gửi quick reply: ${qr.emoji}<code>${qr.key}</code>\n\n💬 "${tinNhan}"`,
+              {
+                reply_to_message_id: query.message.message_id,
+                parse_mode: 'HTML'
+              }
+            );
+            
+            console.log('✓ Đã gửi quick reply thành công');
+          }
+          
+        } catch (error) {
+          console.error('Lỗi gửi quick reply:', error);
+          await bot.answerCallbackQuery(query.id, { text: '❌ Lỗi gửi tin nhắn' });
+        }
+        
+      } else if (action === 'close') {
+        await bot.deleteMessage(query.message.chat.id, query.message.message_id);
+        await bot.answerCallbackQuery(query.id);
+        
+      } else if (action === 'addlabel') {
+        await bot.answerCallbackQuery(query.id, { text: 'Reply tin này và gõ: /label <tên-nhãn>' });
+        
+      } else if (action === 'history') {
+        const customerId = id;
+        
+        try {
+          const keyboard = [
+            [
+              { text: '📅 Hôm nay', callback_data: `historyfilter_${customerId}_today` },
+              { text: '📅 3 ngày', callback_data: `historyfilter_${customerId}_3days` }
+            ],
+            [
+              { text: '📅 7 ngày', callback_data: `historyfilter_${customerId}_7days` },
+              { text: '📅 30 ngày', callback_data: `historyfilter_${customerId}_30days` }
+            ],
+            [
+              { text: '📅 Tất cả', callback_data: `historyfilter_${customerId}_all` }
+            ],
+            [
+              { text: '❌ Đóng', callback_data: 'close' }
+            ]
+          ];
+          
+          await bot.sendMessage(query.message.chat.id,
+            '📋 <b>Chọn khoảng thời gian:</b>',
+            {
+              reply_to_message_id: query.message.message_id,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: keyboard }
+            }
+          );
+          
+          await bot.answerCallbackQuery(query.id);
+          
+        } catch (error) {
+          console.error('Lỗi hiển thị menu lịch sử:', error);
+          await bot.answerCallbackQuery(query.id, { text: '❌ Có lỗi xảy ra' });
+        }
+        
+      } else if (action === 'historyfilter') {
+        const customerId = parts[1];
+        const filter = parts[2];
+        
+        try {
+          let timeCondition = '';
+          let filterName = '';
+          
+          switch(filter) {
+            case 'today':
+              timeCondition = "AND created_at >= CURRENT_DATE";
+              filterName = 'Hôm nay';
+              break;
+            case '3days':
+              timeCondition = "AND created_at >= NOW() - INTERVAL '3 days'";
+              filterName = '3 ngày qua';
+              break;
+            case '7days':
+              timeCondition = "AND created_at >= NOW() - INTERVAL '7 days'";
+              filterName = '7 ngày qua';
+              break;
+            case '30days':
+              timeCondition = "AND created_at >= NOW() - INTERVAL '30 days'";
+              filterName = '30 ngày qua';
+              break;
+            case 'all':
+              timeCondition = '';
+              filterName = 'Tất cả';
+              break;
+          }
+          
+          const customerInfo = await pool.query('SELECT name FROM customers WHERE id = $1', [customerId]);
+          const customerName = customerInfo.rows[0]?.name || 'Unknown';
+          
+          const messagesQuery = `
+            SELECT sender_type, content, media_type, translated_text, created_at
+            FROM messages
+            WHERE customer_id = $1 ${timeCondition}
+            ORDER BY created_at DESC
+            LIMIT 50
+          `;
+          
+          const result = await pool.query(messagesQuery, [customerId]);
+          
+          if (result.rows.length === 0) {
+            await bot.answerCallbackQuery(query.id, { text: '❌ Không có tin nhắn nào' });
+            return;
+          }
+          
+          let lichSu = `📜 <b>LỊCH SỬ CHAT - ${customerName}</b>\n`;
+          lichSu += `🕐 <b>${filterName}</b> (${result.rows.length} tin)\n`;
+          lichSu += `${'━'.repeat(30)}\n\n`;
+          
+          const messages = result.rows.reverse();
+          
+          for (const msg of messages) {
+            const time = new Date(msg.created_at).toLocaleString('vi-VN', {
+              day: '2-digit',
+              month: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit'
+            });
+            
+            const icon = msg.sender_type === 'customer' ? '👤' : '🤖';
+            const sender = msg.sender_type === 'customer' ? 'Khách' : 'Bạn';
+            
+            lichSu += `${icon} <b>${sender}</b> • ${time}\n`;
+            
+            if (msg.media_type) {
+              lichSu += `📎 ${msg.media_type}\n`;
+            }
+            
+            if (msg.content) {
+              const content = msg.content.length > 100 
+                ? msg.content.substring(0, 100) + '...' 
+                : msg.content;
+              lichSu += `💬 ${content}\n`;
+            }
+            
+            if (msg.translated_text && msg.sender_type === 'customer') {
+              const trans = msg.translated_text.length > 80
+                ? msg.translated_text.substring(0, 80) + '...'
+                : msg.translated_text;
+              lichSu += `🇻🇳 ${trans}\n`;
+            }
+            
+            lichSu += `\n`;
+            
+            if (lichSu.length > 3800) {
+              lichSu += `\n<i>... và ${messages.length - messages.indexOf(msg) - 1} tin nữa</i>`;
+              break;
+            }
+          }
+          
+          lichSu += `${'━'.repeat(30)}`;
+          
+          await bot.sendMessage(query.message.chat.id, lichSu, {
+            reply_to_message_id: query.message.message_id,
+            parse_mode: 'HTML'
+          });
+          
+          await bot.answerCallbackQuery(query.id, { text: '✅ Đã tải lịch sử' });
+          
+        } catch (error) {
+          console.error('Lỗi lấy lịch sử:', error);
+          await bot.answerCallbackQuery(query.id, { text: '❌ Có lỗi xảy ra' });
+        }
+        
+      } else if (action === 'done') {
+        await bot.editMessageReplyMarkup(
+          { inline_keyboard: [[{ text: '✅ Đã xử lý', callback_data: 'noop' }]] },
+          { chat_id: query.message.chat.id, message_id: query.message.message_id }
+        );
+        await bot.answerCallbackQuery(query.id, { text: 'Đã đánh dấu hoàn thành' });
+      }
       
-      console.log('✓ Đã gửi quick reply thành công');
+    } catch (error) {
+      console.error('❌ Lỗi callback query:', error);
+      await bot.answerCallbackQuery(query.id, { text: '❌ Có lỗi xảy ra' });
     }
-    
-  } catch (error) {
-    console.error('Lỗi gửi quick reply:', error);
-    await bot.answerCallbackQuery(query.id, { text: '❌ Lỗi gửi tin nhắn' });
-  }
-  
-} else if (action === 'close') {
-  await bot.deleteMessage(query.message.chat.id, query.message.message_id);
-  await bot.answerCallbackQuery(query.id);
-  
-  
-    } else if (action === 'addlabel') {
-      await bot.answerCallbackQuery(query.id, { text: 'Reply tin này và gõ: /label <tên-nhãn>' });
-      
-    } else if (action === 'history') {
-  const customerId = id;
-  
-  try {
-    // Hiển thị menu lọc
-    const keyboard = [
-      [
-        { text: '📅 Hôm nay', callback_data: `historyfilter_${customerId}_today` },
-        { text: '📅 3 ngày', callback_data: `historyfilter_${customerId}_3days` }
-      ],
-      [
-        { text: '📅 7 ngày', callback_data: `historyfilter_${customerId}_7days` },
-        { text: '📅 30 ngày', callback_data: `historyfilter_${customerId}_30days` }
-      ],
-      [
-        { text: '📅 Tất cả', callback_data: `historyfilter_${customerId}_all` }
-      ],
-      [
-        { text: '❌ Đóng', callback_data: 'close' }
-      ]
-    ];
-    
-    await bot.sendMessage(query.message.chat.id,
-      '📋 <b>Chọn khoảng thời gian:</b>',
-      {
-        reply_to_message_id: query.message.message_id,
-        parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: keyboard }
-      }
-    );
-    
-    await bot.answerCallbackQuery(query.id);
-    
-  } catch (error) {
-    console.error('Lỗi hiển thị menu lịch sử:', error);
-    await bot.answerCallbackQuery(query.id, { text: '❌ Có lỗi xảy ra' });
-  }
-  
-} else if (action === 'historyfilter') {
-  const customerId = parts[1];
-  const filter = parts[2];
-  
-  try {
-    // Xác định khoảng thời gian
-    let timeCondition = '';
-    let filterName = '';
-    
-    switch(filter) {
-      case 'today':
-        timeCondition = "AND created_at >= CURRENT_DATE";
-        filterName = 'Hôm nay';
-        break;
-      case '3days':
-        timeCondition = "AND created_at >= NOW() - INTERVAL '3 days'";
-        filterName = '3 ngày qua';
-        break;
-      case '7days':
-        timeCondition = "AND created_at >= NOW() - INTERVAL '7 days'";
-        filterName = '7 ngày qua';
-        break;
-      case '30days':
-        timeCondition = "AND created_at >= NOW() - INTERVAL '30 days'";
-        filterName = '30 ngày qua';
-        break;
-      case 'all':
-        timeCondition = '';
-        filterName = 'Tất cả';
-        break;
-    }
-    
-    // Lấy thông tin khách
-    const customerInfo = await pool.query('SELECT name FROM customers WHERE id = $1', [customerId]);
-    const customerName = customerInfo.rows[0]?.name || 'Unknown';
-    
-    // Lấy tin nhắn
-    const messagesQuery = `
-      SELECT sender_type, content, media_type, translated_text, created_at
-      FROM messages
-      WHERE customer_id = $1 ${timeCondition}
-      ORDER BY created_at DESC
-      LIMIT 50
-    `;
-    
-    const result = await pool.query(messagesQuery, [customerId]);
-    
-    if (result.rows.length === 0) {
-      await bot.answerCallbackQuery(query.id, { text: '❌ Không có tin nhắn nào' });
-      return;
-    }
-    
-    // Format lịch sử
-    let lichSu = `📜 <b>LỊCH SỬ CHAT - ${customerName}</b>\n`;
-    lichSu += `🕐 <b>${filterName}</b> (${result.rows.length} tin)\n`;
-    lichSu += `${'━'.repeat(30)}\n\n`;
-    
-    // Đảo ngược để hiển thị từ cũ đến mới
-    const messages = result.rows.reverse();
-    
-    for (const msg of messages) {
-      const time = new Date(msg.created_at).toLocaleString('vi-VN', {
-        day: '2-digit',
-        month: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-      
-      const icon = msg.sender_type === 'customer' ? '👤' : '🤖';
-      const sender = msg.sender_type === 'customer' ? 'Khách' : 'Bạn';
-      
-      lichSu += `${icon} <b>${sender}</b> • ${time}\n`;
-      
-      if (msg.media_type) {
-        lichSu += `📎 ${msg.media_type}\n`;
-      }
-      
-      if (msg.content) {
-        const content = msg.content.length > 100 
-          ? msg.content.substring(0, 100) + '...' 
-          : msg.content;
-        lichSu += `💬 ${content}\n`;
-      }
-      
-      if (msg.translated_text && msg.sender_type === 'customer') {
-        const trans = msg.translated_text.length > 80
-          ? msg.translated_text.substring(0, 80) + '...'
-          : msg.translated_text;
-        lichSu += `🇻🇳 ${trans}\n`;
-      }
-      
-      lichSu += `\n`;
-      
-      // Telegram giới hạn 4096 ký tự
-      if (lichSu.length > 3800) {
-        lichSu += `\n<i>... và ${messages.length - messages.indexOf(msg) - 1} tin nữa</i>`;
-        break;
-      }
-    }
-    
-    lichSu += `${'━'.repeat(30)}`;
-    
-    await bot.sendMessage(query.message.chat.id, lichSu, {
-      reply_to_message_id: query.message.message_id,
-      parse_mode: 'HTML'
-    });
-    
-    await bot.answerCallbackQuery(query.id, { text: '✅ Đã tải lịch sử' });
-    
-  } catch (error) {
-    console.error('Lỗi lấy lịch sử:', error);
-    await bot.answerCallbackQuery(query.id, { text: '❌ Có lỗi xảy ra' });
-  }
+  });
 
-      
-    } else if (action === 'done') {
-      await bot.editMessageReplyMarkup(
-        { inline_keyboard: [[{ text: '✅ Đã xử lý', callback_data: 'noop' }]] },
-        { chat_id: query.message.chat.id, message_id: query.message.message_id }
-      );
-      await bot.answerCallbackQuery(query.id, { text: 'Đã đánh dấu hoàn thành' });
-    }
+  bot.onText(/\/label (.+)/, async (msg, match) => {
+    if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
     
-  } catch (error) {
-    console.error('❌ Lỗi callback query:', error);
-    await bot.answerCallbackQuery(query.id, { text: '❌ Có lỗi xảy ra' });
-  }
-});
-}
-
-
-if (ENABLE_TELEGRAM_POLLING) {
-// Lệnh thêm nhãn
-bot.onText(/\/label (.+)/, async (msg, match) => {
-  if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
-  
-  if (!msg.reply_to_message) {
-    await bot.sendMessage(msg.chat.id, '❌ Vui lòng reply tin nhắn của khách để thêm nhãn', {
-      reply_to_message_id: msg.message_id
-    });
-    return;
-  }
-  
-  const tenNhan = match[1].trim().toLowerCase();
-  
-  try {
-    // Lấy customer_id từ mapping
-    const query = 'SELECT customer_id FROM conversation_mappings WHERE telegram_message_id = $1';
-    const result = await pool.query(query, [msg.reply_to_message.message_id]);
-    
-    if (result.rows.length === 0) {
-      await bot.sendMessage(msg.chat.id, '❌ Không tìm thấy thông tin khách hàng', {
+    if (!msg.reply_to_message) {
+      await bot.sendMessage(msg.chat.id, '❌ Vui lòng reply tin nhắn của khách để thêm nhãn', {
         reply_to_message_id: msg.message_id
       });
       return;
     }
     
-    const customerId = result.rows[0].customer_id;
+    const tenNhan = match[1].trim().toLowerCase();
     
-    // Tạo hoặc lấy label
-    let labelQuery = 'SELECT id, emoji FROM labels WHERE name = $1';
-    let labelResult = await pool.query(labelQuery, [tenNhan]);
+    try {
+      const query = 'SELECT customer_id FROM conversation_mappings WHERE telegram_message_id = $1';
+      const result = await pool.query(query, [msg.reply_to_message.message_id]);
+      
+      if (result.rows.length === 0) {
+        await bot.sendMessage(msg.chat.id, '❌ Không tìm thấy thông tin khách hàng', {
+          reply_to_message_id: msg.message_id
+        });
+        return;
+      }
+      
+      const customerId = result.rows[0].customer_id;
+      
+      let labelQuery = 'SELECT id, emoji FROM labels WHERE name = $1';
+      let labelResult = await pool.query(labelQuery, [tenNhan]);
+      
+      let labelId, emoji;
+      if (labelResult.rows.length === 0) {
+        const insertLabel = 'INSERT INTO labels (name, emoji, color) VALUES ($1, $2, $3) RETURNING id, emoji';
+        const newLabel = await pool.query(insertLabel, [tenNhan, '🏷️', '#999999']);
+        labelId = newLabel.rows[0].id;
+        emoji = newLabel.rows[0].emoji;
+      } else {
+        labelId = labelResult.rows[0].id;
+        emoji = labelResult.rows[0].emoji;
+      }
+      
+      const assignQuery = `
+        INSERT INTO customer_labels (customer_id, label_id, added_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (customer_id, label_id) DO NOTHING
+      `;
+      await pool.query(assignQuery, [customerId, labelId]);
+      
+      await bot.sendMessage(msg.chat.id, `✅ Đã thêm nhãn ${emoji}<code>${tenNhan}</code>`, {
+        reply_to_message_id: msg.message_id,
+        parse_mode: 'HTML'
+      });
+      
+      console.log(`✓ Đã thêm nhãn "${tenNhan}" cho customer ${customerId}`);
+      
+    } catch (error) {
+      console.error('Lỗi thêm nhãn:', error);
+      await bot.sendMessage(msg.chat.id, `❌ Lỗi: ${error.message}`, {
+        reply_to_message_id: msg.message_id
+      });
+    }
+  });
+
+  bot.onText(/\/labels/, async (msg) => {
+    if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
     
-    let labelId, emoji;
-    if (labelResult.rows.length === 0) {
-      // Tạo label mới với emoji mặc định
-      const insertLabel = 'INSERT INTO labels (name, emoji, color) VALUES ($1, $2, $3) RETURNING id, emoji';
-      const newLabel = await pool.query(insertLabel, [tenNhan, '🏷️', '#999999']);
-      labelId = newLabel.rows[0].id;
-      emoji = newLabel.rows[0].emoji;
-    } else {
-      labelId = labelResult.rows[0].id;
-      emoji = labelResult.rows[0].emoji;
+    try {
+      const result = await pool.query('SELECT name, emoji, color FROM labels ORDER BY name');
+      
+      if (result.rows.length === 0) {
+        await bot.sendMessage(msg.chat.id, '📋 Chưa có nhãn nào');
+        return;
+      }
+      
+      let danhSach = '<b>📋 DANH SÁCH NHÃN:</b>\n\n';
+      
+      for (const label of result.rows) {
+        danhSach += `${label.emoji || '🏷️'} <code>${label.name}</code>\n`;
+      }
+      
+      danhSach += '\n<i>Dùng: /label tên-nhãn (reply tin khách)</i>';
+      
+      await bot.sendMessage(msg.chat.id, danhSach, { parse_mode: 'HTML' });
+      
+    } catch (error) {
+      console.error('Lỗi xem nhãn:', error);
+      await bot.sendMessage(msg.chat.id, '❌ Lỗi lấy danh sách nhãn');
+    }
+  });
+
+  bot.onText(/\/quickreplies/, async (msg) => {
+    if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
+    
+    try {
+      const result = await pool.query('SELECT * FROM quick_replies ORDER BY key');
+      
+      if (result.rows.length === 0) {
+        await bot.sendMessage(msg.chat.id, '📋 Chưa có câu trả lời nhanh nào');
+        return;
+      }
+      
+      let danhSach = '<b>⚡ DANH SÁCH TRẢ LỜI NHANH:</b>\n\n';
+      
+      for (const qr of result.rows) {
+        danhSach += `${qr.emoji || '💬'} <b>${qr.key}</b>\n`;
+        danhSach += `   🇻🇳 ${qr.text_vi}\n`;
+        danhSach += `   🇬🇧 ${qr.text_en}\n\n`;
+      }
+      
+      danhSach += '<i>Nhấn nút "⚡ Trả lời nhanh" dưới tin khách để sử dụng</i>';
+      
+      await bot.sendMessage(msg.chat.id, danhSach, { parse_mode: 'HTML' });
+      
+    } catch (error) {
+      console.error('Lỗi xem quick replies:', error);
+      await bot.sendMessage(msg.chat.id, '❌ Lỗi lấy danh sách');
+    }
+  });
+
+  bot.onText(/\/addquick (.+)/, async (msg, match) => {
+    if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
+    
+    const parts = match[1].split('|');
+    
+    if (parts.length !== 4) {
+      await bot.sendMessage(msg.chat.id, 
+        '❌ Sai format!\n\n' +
+        '<b>Dùng:</b> /addquick key|emoji|text_vi|text_en\n\n' +
+        '<b>Ví dụ:</b>\n' +
+        '<code>/addquick hello|👋|Xin chào|Hello</code>',
+        { parse_mode: 'HTML' }
+      );
+      return;
     }
     
-    // Gán label cho customer
-    const assignQuery = `
-      INSERT INTO customer_labels (customer_id, label_id, added_at)
-      VALUES ($1, $2, NOW())
-      ON CONFLICT (customer_id, label_id) DO NOTHING
-    `;
-    await pool.query(assignQuery, [customerId, labelId]);
+    const [key, emoji, viText, enText] = parts.map(p => p.trim());
     
-    await bot.sendMessage(msg.chat.id, `✅ Đã thêm nhãn ${emoji}<code>${tenNhan}</code>`, {
-      reply_to_message_id: msg.message_id,
-      parse_mode: 'HTML'
-    });
-    
-    console.log(`✓ Đã thêm nhãn "${tenNhan}" cho customer ${customerId}`);
-    
-  } catch (error) {
-    console.error('Lỗi thêm nhãn:', error);
-    await bot.sendMessage(msg.chat.id, `❌ Lỗi: ${error.message}`, {
-      reply_to_message_id: msg.message_id
-    });
-  }
-});
+    try {
+      await pool.query(`
+        INSERT INTO quick_replies (key, emoji, text_vi, text_en, created_at)
+        VALUES ($1, $2, $3, $4, NOW())
+        ON CONFLICT (key) DO UPDATE SET emoji = $2, text_vi = $3, text_en = $4
+      `, [key, emoji, viText, enText]);
+      
+      await bot.sendMessage(msg.chat.id, 
+        `✅ Đã thêm quick reply: ${emoji}<code>${key}</code>`,
+        { parse_mode: 'HTML' }
+      );
+      
+      console.log(`✓ Đã thêm quick reply "${key}"`);
+      
+    } catch (error) {
+      console.error('Lỗi thêm quick reply:', error);
+      await bot.sendMessage(msg.chat.id, `❌ Lỗi: ${error.message}`);
+    }
+  });
 }
-// Lệnh xem danh sách nhãn
-bot.onText(/\/labels/, async (msg) => {
-  if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
-  
-  try {
-    const result = await pool.query('SELECT name, emoji, color FROM labels ORDER BY name');
-    
-    if (result.rows.length === 0) {
-      await bot.sendMessage(msg.chat.id, '📋 Chưa có nhãn nào');
-      return;
-    }
-    
-    let danhSach = '<b>📋 DANH SÁCH NHÃN:</b>\n\n';
-    
-    for (const label of result.rows) {
-      danhSach += `${label.emoji || '🏷️'} <code>${label.name}</code>\n`;
-    }
-    
-    danhSach += '\n<i>Dùng: /label tên-nhãn (reply tin khách)</i>';
-    
-    await bot.sendMessage(msg.chat.id, danhSach, { parse_mode: 'HTML' });
-    
-  } catch (error) {
-    console.error('Lỗi xem nhãn:', error);
-    await bot.sendMessage(msg.chat.id, '❌ Lỗi lấy danh sách nhãn');
-  }
-});
-// Lệnh xem quick replies
-bot.onText(/\/quickreplies/, async (msg) => {
-  if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
-  
-  try {
-    const result = await pool.query('SELECT * FROM quick_replies ORDER BY key');
-    
-    if (result.rows.length === 0) {
-      await bot.sendMessage(msg.chat.id, '📋 Chưa có câu trả lời nhanh nào');
-      return;
-    }
-    
-    let danhSach = '<b>⚡ DANH SÁCH TRẢ LỜI NHANH:</b>\n\n';
-    
-    for (const qr of result.rows) {
-      danhSach += `${qr.emoji || '💬'} <b>${qr.key}</b>\n`;
-      danhSach += `   🇻🇳 ${qr.text_vi}\n`;
-      danhSach += `   🇬🇧 ${qr.text_en}\n\n`;
-    }
-    
-    danhSach += '<i>Nhấn nút "⚡ Trả lời nhanh" dưới tin khách để sử dụng</i>';
-    
-    await bot.sendMessage(msg.chat.id, danhSach, { parse_mode: 'HTML' });
-    
-  } catch (error) {
-    console.error('Lỗi xem quick replies:', error);
-    await bot.sendMessage(msg.chat.id, '❌ Lỗi lấy danh sách');
-  }
-});
 
-// Lệnh thêm quick reply mới
-bot.onText(/\/addquick (.+)/, async (msg, match) => {
-  if (msg.chat.id.toString() !== process.env.TELEGRAM_GROUP_ID) return;
-  
-  // Format: /addquick key|emoji|vi_text|en_text
-  const parts = match[1].split('|');
-  
-  if (parts.length !== 4) {
-    await bot.sendMessage(msg.chat.id, 
-      '❌ Sai format!\n\n' +
-      '<b>Dùng:</b> /addquick key|emoji|text_vi|text_en\n\n' +
-      '<b>Ví dụ:</b>\n' +
-      '<code>/addquick hello|👋|Xin chào|Hello</code>',
-      { parse_mode: 'HTML' }
-    );
-    return;
-  }
-  
-  const [key, emoji, viText, enText] = parts.map(p => p.trim());
-  
-  try {
-    await pool.query(`
-      INSERT INTO quick_replies (key, emoji, text_vi, text_en, created_at)
-      VALUES ($1, $2, $3, $4, NOW())
-      ON CONFLICT (key) DO UPDATE SET emoji = $2, text_vi = $3, text_en = $4
-    `, [key, emoji, viText, enText]);
-    
-    await bot.sendMessage(msg.chat.id, 
-      `✅ Đã thêm quick reply: ${emoji}<code>${key}</code>`,
-      { parse_mode: 'HTML' }
-    );
-    
-    console.log(`✓ Đã thêm quick reply "${key}"`);
-    
-  } catch (error) {
-    console.error('Lỗi thêm quick reply:', error);
-    await bot.sendMessage(msg.chat.id, `❌ Lỗi: ${error.message}`);
-  }
-});
-// ==================== API ENDPOINTS ====================
-
-// API: Lấy danh sách conversations (OPTIMIZED)
+// API endpoints
 app.get('/api/conversations', async (req, res) => {
   try {
     const { page_id, status, limit = 50 } = req.query;
     
-    // Query với LEFT JOIN để lấy labels cùng lúc
     let query = `
       SELECT 
         c.id,
@@ -1616,8 +1512,6 @@ app.get('/api/conversations', async (req, res) => {
   }
 });
 
-
-// API: Lấy tin nhắn của 1 conversation
 app.get('/api/conversations/:customerId/messages', async (req, res) => {
   try {
     const { customerId } = req.params;
@@ -1640,7 +1534,7 @@ app.get('/api/conversations/:customerId/messages', async (req, res) => {
     
     res.json({
       success: true,
-      data: result.rows.reverse() // Đảo ngược để tin cũ lên đầu
+      data: result.rows.reverse()
     });
     
   } catch (error) {
@@ -1652,7 +1546,6 @@ app.get('/api/conversations/:customerId/messages', async (req, res) => {
   }
 });
 
-// API: Gửi tin nhắn
 app.post('/api/conversations/:customerId/send', async (req, res) => {
   try {
     const { customerId } = req.params;
@@ -1665,7 +1558,6 @@ app.post('/api/conversations/:customerId/send', async (req, res) => {
       });
     }
     
-    // Lấy thông tin customer
     const customerResult = await pool.query(
       'SELECT fb_id, page_id FROM customers WHERE id = $1',
       [customerId]
@@ -1688,13 +1580,11 @@ app.post('/api/conversations/:customerId/send', async (req, res) => {
       });
     }
     
-    // Dịch nếu cần
     let finalMessage = message;
     if (translate) {
       finalMessage = await dichSangTiengAnh(message);
     }
     
-    // Gửi đến Facebook
     const response = await axios.post(
       `https://graph.facebook.com/v23.0/me/messages`,
       {
@@ -1708,10 +1598,8 @@ app.post('/api/conversations/:customerId/send', async (req, res) => {
     );
     
     if (response.data.message_id) {
-      // Lưu vào database
       await luuTinNhan(customerId, customer.page_id, 'admin', finalMessage);
       
-      // Broadcast đến các clients khác
       broadcastToWeb('message_sent', {
         customerId,
         message: finalMessage,
@@ -1739,7 +1627,6 @@ app.post('/api/conversations/:customerId/send', async (req, res) => {
   }
 });
 
-// API: Lấy danh sách labels
 app.get('/api/labels', async (req, res) => {
   try {
     const result = await pool.query(
@@ -1760,7 +1647,6 @@ app.get('/api/labels', async (req, res) => {
   }
 });
 
-// API: Thêm label cho customer
 app.post('/api/customers/:customerId/labels', async (req, res) => {
   try {
     const { customerId } = req.params;
@@ -1785,7 +1671,6 @@ app.post('/api/customers/:customerId/labels', async (req, res) => {
   }
 });
 
-// API: Lấy quick replies
 app.get('/api/quickreplies', async (req, res) => {
   try {
     const result = await pool.query(
@@ -1806,9 +1691,7 @@ app.get('/api/quickreplies', async (req, res) => {
   }
 });
 
-// API: Health check
 app.get('/api/health', (req, res) => {
-  
   res.json({
     success: true,
     status: 'ok',
@@ -1816,20 +1699,17 @@ app.get('/api/health', (req, res) => {
     connectedClients: connectedClients.size
   });
 });
-// API: Test Telegram connection
+
 app.get('/api/test-telegram', async (req, res) => {
   try {
     console.log('🔧 Testing Telegram connection...');
     
-    // Test 1: Check bot exists
     const botInfo = await bot.getMe();
     console.log('✅ Bot OK:', botInfo.username);
     
-    // Test 2: Get group ID
     const groupId = process.env.TELEGRAM_GROUP_ID;
     console.log('📍 Group ID:', groupId);
     
-    // Test 3: Send message
     const testMsg = '🔧 Test từ Dashboard: ' + new Date().toLocaleString('vi-VN');
     
     const result = await bot.sendMessage(groupId, testMsg);
@@ -1850,7 +1730,6 @@ app.get('/api/test-telegram', async (req, res) => {
   }
 });
 
-// API: Dịch text
 app.post('/api/translate', async (req, res) => {
   try {
     const { text, to = 'en' } = req.body;
@@ -1889,7 +1768,7 @@ app.post('/api/translate', async (req, res) => {
     });
   }
 });
-// API: Xóa label khỏi customer
+
 app.delete('/api/customers/:customerId/labels/:labelId', async (req, res) => {
   try {
     const { customerId, labelId } = req.params;
@@ -1899,7 +1778,6 @@ app.delete('/api/customers/:customerId/labels/:labelId', async (req, res) => {
       [customerId, labelId]
     );
     
-    // Broadcast change
     broadcastToWeb('label_removed', { customerId, labelId });
     
     res.json({ success: true });
@@ -1913,7 +1791,6 @@ app.delete('/api/customers/:customerId/labels/:labelId', async (req, res) => {
   }
 });
 
-// API: Tạo label mới
 app.post('/api/labels', async (req, res) => {
   try {
     const { name, emoji, color } = req.body;
@@ -1936,7 +1813,7 @@ app.post('/api/labels', async (req, res) => {
     });
     
   } catch (error) {
-    if (error.code === '23505') { // Duplicate key
+    if (error.code === '23505') {
       return res.status(400).json({
         success: false,
         error: 'Label already exists'
@@ -1950,6 +1827,7 @@ app.post('/api/labels', async (req, res) => {
     });
   }
 });
+
 app.put('/api/labels/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -1988,15 +1866,12 @@ app.put('/api/labels/:id', async (req, res) => {
   }
 });
 
-// THÊM API NÀY - Delete label
 app.delete('/api/labels/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Xóa customer_labels trước (foreign key)
     await pool.query('DELETE FROM customer_labels WHERE label_id = $1', [id]);
     
-    // Xóa label
     const result = await pool.query(
       'DELETE FROM labels WHERE id = $1 RETURNING *',
       [id]
@@ -2022,7 +1897,7 @@ app.delete('/api/labels/:id', async (req, res) => {
     });
   }
 });
-// API: Lấy labels của một customer
+
 app.get('/api/customers/:customerId/labels', async (req, res) => {
   try {
     const { customerId } = req.params;
@@ -2048,7 +1923,7 @@ app.get('/api/customers/:customerId/labels', async (req, res) => {
     });
   }
 });
-// API: Upload file và gửi cho customer
+
 app.post('/api/conversations/:customerId/send-media', upload.single('file'), async (req, res) => {
   try {
     const { customerId } = req.params;
@@ -2064,14 +1939,12 @@ app.post('/api/conversations/:customerId/send-media', upload.single('file'), asy
     
     console.log('📎 Uploading file:', file.originalname, file.mimetype);
     
-    // Lấy thông tin customer
     const customerResult = await pool.query(
       'SELECT fb_id, page_id FROM customers WHERE id = $1',
       [customerId]
     );
     
     if (customerResult.rows.length === 0) {
-      // Xóa file tạm
       fs.unlinkSync(file.path);
       return res.status(404).json({
         success: false,
@@ -2090,7 +1963,6 @@ app.post('/api/conversations/:customerId/send-media', upload.single('file'), asy
       });
     }
     
-    // Xác định loại file
     let attachmentType = 'file';
     if (file.mimetype.startsWith('image/')) {
       attachmentType = 'image';
@@ -2100,7 +1972,6 @@ app.post('/api/conversations/:customerId/send-media', upload.single('file'), asy
       attachmentType = 'audio';
     }
     
-    // Upload file lên Facebook
     const formData = new FormData();
     formData.append('recipient', JSON.stringify({ id: customer.fb_id }));
     formData.append('message', JSON.stringify({
@@ -2125,14 +1996,11 @@ app.post('/api/conversations/:customerId/send-media', upload.single('file'), asy
       }
     );
     
-    // Xóa file tạm
     fs.unlinkSync(file.path);
     
     if (response.data.message_id) {
-      // Lưu vào database
       await luuTinNhan(customerId, customer.page_id, 'admin', message || '', attachmentType, file.originalname);
       
-      // Broadcast
       broadcastToWeb('message_sent', {
         customerId,
         message: message || '',
@@ -2155,7 +2023,6 @@ app.post('/api/conversations/:customerId/send-media', upload.single('file'), asy
   } catch (error) {
     console.error('API Error - send media:', error);
     
-    // Xóa file nếu có lỗi
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
@@ -2166,9 +2033,7 @@ app.post('/api/conversations/:customerId/send-media', upload.single('file'), asy
     });
   }
 });
-// ==================== QUICK REPLIES MANAGEMENT APIs ====================
 
-// API: Cập nhật quick reply
 app.put('/api/quickreplies/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -2217,7 +2082,6 @@ app.put('/api/quickreplies/:id', async (req, res) => {
   }
 });
 
-// API: Xóa quick reply
 app.delete('/api/quickreplies/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -2248,7 +2112,6 @@ app.delete('/api/quickreplies/:id', async (req, res) => {
   }
 });
 
-// API: Tạo quick reply mới
 app.post('/api/quickreplies', async (req, res) => {
   try {
     const { key, emoji, text_vi, text_en } = req.body;
@@ -2288,7 +2151,6 @@ app.post('/api/quickreplies', async (req, res) => {
   }
 });
 
-// Delay server start để đảm bảo mọi thứ đã ready
 setTimeout(() => {
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`\n${'='.repeat(50)}`);
@@ -2301,7 +2163,6 @@ setTimeout(() => {
   });
 }, 100);
 
-// Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('⚠️ SIGTERM received, shutting down...');
   server.close(() => {
