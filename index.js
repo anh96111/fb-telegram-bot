@@ -123,11 +123,23 @@ io.on('connection', (socket) => {
   console.log('✓ Web client connected:', socket.id);
   connectedClients.add(socket.id);
   
+  // Handle ping from client (keep-alive)
+  socket.on('ping', () => {
+    socket.emit('pong');
+  });
+  
   socket.on('disconnect', () => {
     console.log('✗ Web client disconnected:', socket.id);
     connectedClients.delete(socket.id);
   });
+  
+  // Send welcome message
+  socket.emit('connected', {
+    message: 'Connected to server',
+    timestamp: new Date().toISOString()
+  });
 });
+
 
 // Hàm gửi tin nhắn mới đến tất cả web clients
 function broadcastToWeb(event, data) {
