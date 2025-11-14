@@ -2150,6 +2150,61 @@ app.post('/api/quickreplies', async (req, res) => {
     });
   }
 });
+// API: Test Gemini connection
+app.get('/api/test-gemini', async (req, res) => {
+  try {
+    const GEMINI_KEY = process.env.GEMINI_API_KEY;
+    const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    
+    console.log('🔧 Testing Gemini...');
+    console.log('Model:', GEMINI_MODEL);
+    console.log('Key exists:', !!GEMINI_KEY);
+    console.log('Key prefix:', GEMINI_KEY ? GEMINI_KEY.substring(0, 10) + '...' : 'NO KEY');
+    
+    if (!GEMINI_KEY) {
+      return res.json({
+        success: false,
+        error: 'No GEMINI_API_KEY found'
+      });
+    }
+    
+    const testText = 'Hello';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
+    
+    console.log('URL:', url.replace(GEMINI_KEY, 'KEY_HIDDEN'));
+    
+    const response = await axios.post(
+      url,
+      {
+        contents: [{
+          parts: [{
+            text: `Translate to Vietnamese: ${testText}`
+          }]
+        }]
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    res.json({
+      success: true,
+      model: GEMINI_MODEL,
+      response: response.data
+    });
+    
+  } catch (error) {
+    console.error('❌ Gemini test error:', error.response?.data || error.message);
+    res.json({
+      success: false,
+      error: error.message,
+      details: error.response?.data,
+      status: error.response?.status
+    });
+  }
+});
 
 setTimeout(() => {
   server.listen(PORT, '0.0.0.0', () => {
